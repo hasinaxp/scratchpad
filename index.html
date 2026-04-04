@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>scratchpad</title>
+        <link rel="stylesheet" href="style.css">
+    </head>
+    <body>
+        <main>
+            <div class="tab-headers" role="tablist" aria-label="Editor tabs">
+                <div class="tab-add" id="add-tab" role="button" aria-label="Add tab" tabindex="0">+</div>
+            </div>
+            <div class="tab-content">
+                <div class="editor-shell">
+                    <div id="line-numbers" class="line-numbers" aria-hidden="true"></div>
+                    <div class="editor-pane">
+                        <pre id="editor-highlight" class="editor-highlight" aria-hidden="true"></pre>
+                        <textarea id="tab-editor" class="tab-editor" spellcheck="false" placeholder="Type your notes here..."></textarea>
+                    </div>
+                </div>
+                <div class="status-bar" aria-live="polite">
+                    <span id="status-position" class="status-item">Ln 1, Col 1</span>
+                    <span id="status-lines" class="status-item">Lines 1</span>
+                    <span id="status-chars" class="status-item">Chars 0</span>
+                    <label class="status-language-wrap" for="status-language">Lang</label>
+                    <select id="status-language" class="status-language" aria-label="Editor language">
+                        <option value="markdown" selected>Markdown</option>
+                        <option value="python">Python</option>
+                        <option value="java">Java</option>
+                        <option value="yaml">YAML</option>
+                        <option value="json">JSON</option>
+                    </select>
+                </div>
+            </div>
+        </main>
+
+        <script type="module" src="src/main.js"></script>
+    </body>
+
+
+</html>
+
