@@ -5,33 +5,139 @@
         <link rel="stylesheet" href="style.css">
     </head>
     <body>
-        <main>
-            <div class="tab-headers" role="tablist" aria-label="Editor tabs">
-                <div class="tab-add" id="add-tab" role="button" aria-label="Add tab" tabindex="0">+</div>
+        <div id="app-loader" class="app-loader" role="status" aria-live="polite" aria-label="Loading application">
+            <div class="app-loader-inner">
+                <div class="app-loader-spinner" aria-hidden="true"></div>
+                <div class="app-loader-text">Loading scratchpad...</div>
             </div>
-            <div class="tab-content">
-                <div class="editor-shell">
-                    <div id="line-numbers" class="line-numbers" aria-hidden="true"></div>
-                    <div class="editor-pane">
-                        <pre id="editor-highlight" class="editor-highlight" aria-hidden="true"></pre>
-                        <textarea id="tab-editor" class="tab-editor" spellcheck="false" placeholder="Type your notes here..."></textarea>
+        </div>
+        <div class="app-shell">
+            <aside class="left-panel" aria-label="Sidebar">
+                <button id="files-menu-btn" class="sidebar-item" type="button" aria-label="Files menu" aria-expanded="false">
+                    <img class="sidebar-icon" src="assets/icon-files.svg" alt="" aria-hidden="true">
+                    <span>Files</span>
+                </button>
+                <button id="decode-menu-btn" class="sidebar-item" type="button" aria-label="Decode selected text" aria-expanded="false">
+                    <img class="sidebar-icon" src="assets/icon-decode.svg" alt="" aria-hidden="true">
+                    <span>Decode</span>
+                </button>
+                <button id="format-json-btn" class="sidebar-item" type="button" aria-label="Format" aria-expanded="false" hidden>
+                    <img class="sidebar-icon" src="assets/icon-format.svg" alt="" aria-hidden="true">
+                    <span>Format</span>
+                </button>
+                <button id="query-btn" class="sidebar-item" type="button" aria-label="Query" aria-expanded="false" hidden>
+                    <img class="sidebar-icon" src="assets/icon-query.svg" alt="" aria-hidden="true">
+                    <span>Query</span>
+                </button>
+                <div id="files-submenu" class="sidebar-submenu" role="menu" aria-label="Files actions" hidden>
+                    <button id="export-localstorage-btn" class="submenu-item" type="button" role="menuitem">Export localstorage</button>
+                    <button id="import-localstorage-btn" class="submenu-item" type="button" role="menuitem">Import localstorage</button>
+                    <button id="download-tab-btn" class="submenu-item" type="button" role="menuitem">Download tab content</button>
+                </div>
+                <div id="decode-submenu" class="sidebar-submenu" role="menu" aria-label="Decode actions" hidden>
+                    <button id="decode-url-btn" class="submenu-item" type="button" role="menuitem">From URL encoded</button>
+                    <button id="decode-unicode-btn" class="submenu-item" type="button" role="menuitem">From Unicode escape</button>
+                    <button id="decode-jwt-payload-btn" class="submenu-item" type="button" role="menuitem">From JWT payload</button>
+                    <button id="decode-jwt-header-btn" class="submenu-item" type="button" role="menuitem">From JWT header</button>
+                </div>
+                <div id="format-json-submenu" class="sidebar-submenu" role="menu" aria-label="JSON format actions" hidden>
+                    <button id="format-json-pretty-btn" class="submenu-item" type="button" role="menuitem">Pretty</button>
+                    <button id="format-json-minified-btn" class="submenu-item" type="button" role="menuitem">Minified</button>
+                </div>
+                <input id="import-localstorage-input" type="file" accept="application/json" hidden>
+            </aside>
+
+            <main>
+                <div class="tab-headers" role="tablist" aria-label="Editor tabs">
+                    <div class="tab-add" id="add-tab" role="button" aria-label="Add tab" tabindex="0">+</div>
+                </div>
+                <div class="tab-content">
+                    <div class="editor-shell">
+                        <div id="line-numbers" class="line-numbers" aria-hidden="true"></div>
+                        <div class="editor-pane">
+                            <pre id="editor-highlight" class="editor-highlight" aria-hidden="true"></pre>
+                            <textarea id="tab-editor" class="tab-editor" spellcheck="false" placeholder="Type your notes here..."></textarea>
+                        </div>
+                    </div>
+                    <div class="status-bar" aria-live="polite">
+                        <span id="status-position" class="status-item">Ln 1, Col 1</span>
+                        <span id="status-lines" class="status-item">Lines 1</span>
+                        <span id="status-chars" class="status-item">Chars 0</span>
+                        <label class="status-language-wrap" for="status-language">Lang</label>
+                        <select id="status-language" class="status-language" aria-label="Editor language">
+                            <option value="markdown" selected>Markdown</option>
+                            <option value="json">JSON</option>
+                            <option value="yaml">YAML</option>
+                            <option value="python">Python</option>
+                            <option value="java">Java</option>
+                        </select>
                     </div>
                 </div>
-                <div class="status-bar" aria-live="polite">
-                    <span id="status-position" class="status-item">Ln 1, Col 1</span>
-                    <span id="status-lines" class="status-item">Lines 1</span>
-                    <span id="status-chars" class="status-item">Chars 0</span>
-                    <label class="status-language-wrap" for="status-language">Lang</label>
-                    <select id="status-language" class="status-language" aria-label="Editor language">
-                        <option value="markdown" selected>Markdown</option>
-                        <option value="python">Python</option>
-                        <option value="java">Java</option>
-                        <option value="yaml">YAML</option>
-                        <option value="json">JSON</option>
-                    </select>
+            </main>
+
+            <aside id="query-panel" class="query-panel" aria-label="JSON query panel" hidden>
+                <div class="query-panel-header">
+                    <div class="query-panel-heading">
+                        <div class="query-panel-title">JSON Query</div>
+                        <button id="query-guide-open" class="query-guide-link" type="button">Guide</button>
+                    </div>
+                    <button id="query-panel-close" class="query-close" type="button" aria-label="Close query panel">x</button>
                 </div>
-            </div>
-        </main>
+                <section id="query-main-view" class="query-view" aria-label="Query view">
+                    <label for="query-input" class="query-label">Query</label>
+                    <textarea id="query-input" class="query-input" spellcheck="false" placeholder='users | filter(@.age > 21) | map({name, age})'></textarea>
+                    <div class="query-actions">
+                        <button id="query-run" class="query-action" type="button">Run</button>
+                    </div>
+                    <div id="query-result-meta" class="query-result-meta">Ready</div>
+                    <div class="query-result-shell">
+                        <pre id="query-result-highlight" class="query-result-highlight" aria-hidden="true"></pre>
+                        <textarea id="query-result" class="query-result-editor" aria-live="polite" spellcheck="false" readonly></textarea>
+                    </div>
+                </section>
+                <section id="query-guide-view" class="query-view" aria-label="Query guide view" hidden>
+                    <div class="query-actions">
+                        <button id="query-guide-back" class="query-action query-action-secondary" type="button">Back</button>
+                    </div>
+                    <div class="query-guide-body">
+                        <h4>Quick Start</h4>
+                        <p>Write a pipeline starting from a source path, then chain steps.</p>
+                        <pre>users | filter(@.age &gt;= 21) | map({name, age})</pre>
+                        <h4>Common Steps</h4>
+                        <pre>filter(expr)
+map(expr)
+sort(path asc|desc)
+limit(n), skip(n), at(n), slice(start,count)
+distinct(path?), flatten(path?), count(expr?)</pre>
+                        <h4>Examples</h4>
+                        <pre>users | at(0)
+users | skip(10) | limit(10)
+users | distinct(profile.country)
+orders | flatten(items) | map({id, sku: @.items.sku})</pre>
+                        <h4>Filtering Basics</h4>
+                        <pre>// exact match
+users | filter(@.name == "Alice")
+
+// numeric comparison
+users | filter(@.age >= 21)
+
+// null / exists checks
+users | filter(@.profile != null)
+users | filter(exists(@.profile.city))
+
+// contains on strings
+users | filter(contains(@.name, "li"))
+
+// combine conditions
+users | filter(@.age >= 21 && @.active == true)</pre>
+                        <h4>Tips</h4>
+                        <pre>@ = current item
+$ = root JSON
+For mixed logs/SSE text, JPL runs per detected JSON chunk.</pre>
+                    </div>
+                </section>
+            </aside>
+        </div>
 
         <script type="module" src="src/main.js"></script>
     </body>

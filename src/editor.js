@@ -36,9 +36,23 @@ export class EditorController {
         };
     }
 
+    getSelectedText() {
+        const { start, end } = this.getSelectionOffsets();
+        if (start === end) return '';
+        return this.getContent().slice(start, end);
+    }
+
     setSelectionOffsets(start, end = start) {
         this.editor.setSelectionRange(start, end);
         this.editor.focus();
+    }
+
+    replaceSelectionText(nextSelectionText) {
+        const { start, end } = this.getSelectionOffsets();
+        const text = this.getContent();
+        const nextText = `${text.slice(0, start)}${nextSelectionText}${text.slice(end)}`;
+        const nextCaret = start + nextSelectionText.length;
+        this.applyTextChange(nextText, nextCaret);
     }
 
     syncModelFromEditor() {
