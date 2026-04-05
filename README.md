@@ -7,7 +7,7 @@ There is no backend. Your data stays in your browser and is persisted in localSt
 ## Highlights
 
 - Multi-tab editing with local persistence
-- Mode-based tabs (`markdown`, `json`, `python`, `javascript`, `text`, `diff`)
+- Mode-based tabs (`markdown`, `json`, `python`, `java`, `text`, `diff`)
 - Dedicated diff mode with side-by-side inputs and GitHub-style unified output
 - Syntax highlighting for supported code modes
 - Powerful cross-tab fuzzy search with jump-to-result
