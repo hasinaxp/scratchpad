@@ -1,8 +1,10 @@
 import { TAB_INDENT } from './utils.js';
 import { highlightText } from './syntaxHighlighter.js';
 
-const LARGE_CONTENT_THRESHOLD = 60000;
+const LARGE_CONTENT_THRESHOLD = 1_000_000;
 const LARGE_CONTENT_HIGHLIGHT_DELAY = 140;
+const TAB_WIDTH_FOR_INDENT = 4;
+const HISTORY_LIMIT = 500;
 
 export class EditorController {
     constructor({ editor, highlightLayer, stateStore, lineNumbers, statusBar, onActiveTitleChange }) {
@@ -17,12 +19,474 @@ export class EditorController {
         this.highlightTimer = 0;
         this.highlightEnabled = true;
         this.editorPane = this.editor.closest('.editor-pane');
+        this.foldStateByTabId = new Map();
+        this.displayToRawLineMap = null;
+        this.foldableRangeByStartLine = new Map();
+        this.collapsedStartLines = new Set();
+        this.historyByTabId = new Map();
 
         this.bindEvents();
     }
 
     getContent() {
+        if (this.isFoldedViewActive()) {
+            return this.stateStore.getActiveTab()?.content || '';
+        }
         return this.editor.value || '';
+    }
+
+    getDisplayContent() {
+        return this.editor.value || '';
+    }
+
+    isFoldedViewActive() {
+        const activeTab = this.stateStore.getActiveTab();
+        if (!activeTab) return false;
+        const state = this.foldStateByTabId.get(activeTab.id);
+        return Boolean(state && Array.isArray(state.collapsed) && state.collapsed.length > 0);
+    }
+
+    getActiveFoldState() {
+        const activeTab = this.stateStore.getActiveTab();
+        if (!activeTab) return null;
+
+        if (!this.foldStateByTabId.has(activeTab.id)) {
+            this.foldStateByTabId.set(activeTab.id, { collapsed: [] });
+        }
+
+        return this.foldStateByTabId.get(activeTab.id);
+    }
+
+    getLineNumberFromOffset(offset, text = this.getDisplayContent()) {
+        const before = text.slice(0, Math.max(0, offset));
+        return (before.match(/\n/g)?.length || 0) + 1;
+    }
+
+    getHistoryForTab(tabId) {
+        if (!tabId) return null;
+        if (!this.historyByTabId.has(tabId)) {
+            this.historyByTabId.set(tabId, {
+                undo: [],
+                redo: [],
+                lastSnapshot: null
+            });
+        }
+        return this.historyByTabId.get(tabId);
+    }
+
+    getActiveHistory() {
+        const tab = this.stateStore.getActiveTab();
+        if (!tab) return null;
+        return this.getHistoryForTab(tab.id);
+    }
+
+    clampHistoryStack(stack) {
+        if (stack.length <= HISTORY_LIMIT) return;
+        stack.splice(0, stack.length - HISTORY_LIMIT);
+    }
+
+    pushUndoSnapshot(history, snapshot) {
+        if (!history || !snapshot) return;
+        const last = history.undo[history.undo.length - 1];
+        if (last && last.text === snapshot.text && last.start === snapshot.start && last.end === snapshot.end) {
+            return;
+        }
+        history.undo.push(snapshot);
+        this.clampHistoryStack(history.undo);
+    }
+
+    syncHistoryFromCurrentTab() {
+        const tab = this.stateStore.getActiveTab();
+        if (!tab) return;
+
+        const history = this.getHistoryForTab(tab.id);
+        if (!history) return;
+
+        const folded = this.isFoldedViewActive();
+        const start = folded ? 0 : (this.editor.selectionStart ?? 0);
+        const end = folded ? 0 : (this.editor.selectionEnd ?? 0);
+        history.lastSnapshot = {
+            text: tab.content || '',
+            start,
+            end
+        };
+    }
+
+    recordHistoryBeforeChange(nextText, nextStart, nextEnd, clearRedo = true) {
+        const tab = this.stateStore.getActiveTab();
+        if (!tab) return;
+        const history = this.getHistoryForTab(tab.id);
+        if (!history) return;
+
+        const currentOffsets = this.getSelectionOffsets();
+        const fallbackSnapshot = {
+            text: tab.content || '',
+            start: currentOffsets.start,
+            end: currentOffsets.end
+        };
+
+        const previous = history.lastSnapshot || fallbackSnapshot;
+        if (previous.text === nextText && previous.start === nextStart && previous.end === nextEnd) {
+            history.lastSnapshot = { text: nextText, start: nextStart, end: nextEnd };
+            return;
+        }
+
+        this.pushUndoSnapshot(history, previous);
+        if (clearRedo) {
+            history.redo.length = 0;
+        }
+
+        history.lastSnapshot = {
+            text: nextText,
+            start: nextStart,
+            end: nextEnd
+        };
+    }
+
+    undo() {
+        if (this.isFoldedViewActive()) {
+            this.unfoldAll();
+        }
+
+        const tab = this.stateStore.getActiveTab();
+        if (!tab) return false;
+
+        const history = this.getHistoryForTab(tab.id);
+        if (!history || history.undo.length === 0) return false;
+
+        const currentOffsets = this.getSelectionOffsets();
+        const current = {
+            text: tab.content || '',
+            start: currentOffsets.start,
+            end: currentOffsets.end
+        };
+
+        const previous = history.undo.pop();
+        if (!previous) return false;
+
+        history.redo.push(current);
+        this.clampHistoryStack(history.redo);
+
+        this.applyTextChange(previous.text, previous.start, previous.end, {
+            recordHistory: false
+        });
+
+        history.lastSnapshot = { ...previous };
+        return true;
+    }
+
+    redo() {
+        if (this.isFoldedViewActive()) {
+            this.unfoldAll();
+        }
+
+        const tab = this.stateStore.getActiveTab();
+        if (!tab) return false;
+
+        const history = this.getHistoryForTab(tab.id);
+        if (!history || history.redo.length === 0) return false;
+
+        const currentOffsets = this.getSelectionOffsets();
+        const current = {
+            text: tab.content || '',
+            start: currentOffsets.start,
+            end: currentOffsets.end
+        };
+
+        const next = history.redo.pop();
+        if (!next) return false;
+
+        this.pushUndoSnapshot(history, current);
+        this.applyTextChange(next.text, next.start, next.end, {
+            recordHistory: false
+        });
+
+        history.lastSnapshot = { ...next };
+        return true;
+    }
+
+    refreshFoldMetadata(rawText, collapsed = []) {
+        const foldable = this.getFoldableRanges(rawText);
+
+        this.foldableRangeByStartLine = new Map();
+        for (const range of foldable) {
+            const prev = this.foldableRangeByStartLine.get(range.startLine);
+            if (!prev || range.endLine > prev.endLine) {
+                this.foldableRangeByStartLine.set(range.startLine, range.endLine);
+            }
+        }
+
+        this.collapsedStartLines = new Set(collapsed.map((range) => range.startLine));
+    }
+
+    getFoldIndicatorForDisplayLine(displayLine) {
+        const rawLine = this.toRawLineFromDisplayLine(displayLine);
+        if (this.collapsedStartLines.has(rawLine)) return 'collapsed';
+        if (this.foldableRangeByStartLine.has(rawLine)) return 'expanded';
+        return 'none';
+    }
+
+    toRawLineFromDisplayLine(displayLine) {
+        if (!this.displayToRawLineMap || displayLine < 1 || displayLine > this.displayToRawLineMap.length) {
+            return displayLine;
+        }
+        return this.displayToRawLineMap[displayLine - 1] || displayLine;
+    }
+
+    normalizeCollapsedRanges(collapsed) {
+        if (!Array.isArray(collapsed) || collapsed.length === 0) return [];
+
+        const dedup = new Map();
+        collapsed
+            .filter((range) => Number.isInteger(range?.startLine) && Number.isInteger(range?.endLine) && range.endLine > range.startLine)
+            .forEach((range) => {
+                const key = `${range.startLine}:${range.endLine}`;
+                if (!dedup.has(key)) {
+                    dedup.set(key, { ...range });
+                }
+            });
+
+        return Array.from(dedup.values())
+            .sort((a, b) => a.startLine - b.startLine || b.endLine - a.endLine);
+    }
+
+    syncCollapsedWithFoldableRanges(text, collapsed) {
+        const foldable = this.getFoldableRanges(text);
+        if (collapsed.length === 0 || foldable.length === 0) return [];
+
+        const foldableByStart = new Map();
+        for (const range of foldable) {
+            const prev = foldableByStart.get(range.startLine);
+            if (!prev || range.endLine > prev.endLine) {
+                foldableByStart.set(range.startLine, range);
+            }
+        }
+
+        return this.normalizeCollapsedRanges(
+            collapsed
+                .map((range) => {
+                    const matched = foldableByStart.get(range.startLine);
+                    if (!matched) return null;
+                    return {
+                        startLine: matched.startLine,
+                        endLine: Math.min(range.endLine, matched.endLine)
+                    };
+                })
+                .filter(Boolean)
+        );
+    }
+
+    computeBraceFoldRanges(lines) {
+        const stack = [];
+        const ranges = [];
+        let inBlockComment = false;
+
+        for (let index = 0; index < lines.length; index += 1) {
+            const line = lines[index];
+            let inQuote = null;
+            let escaped = false;
+
+            for (let i = 0; i < line.length; i += 1) {
+                const char = line[i];
+
+                if (inBlockComment) {
+                    if (char === '*' && line[i + 1] === '/') {
+                        inBlockComment = false;
+                        i += 1;
+                    }
+                    continue;
+                }
+
+                if (inQuote) {
+                    if (escaped) {
+                        escaped = false;
+                        continue;
+                    }
+
+                    if (char === '\\') {
+                        escaped = true;
+                        continue;
+                    }
+
+                    if (char === inQuote) {
+                        inQuote = null;
+                    }
+                    continue;
+                }
+
+                if (char === '/' && line[i + 1] === '/') {
+                    break;
+                }
+
+                if (char === '/' && line[i + 1] === '*') {
+                    inBlockComment = true;
+                    i += 1;
+                    continue;
+                }
+
+                if (char === '"' || char === '\'' || char === '`') {
+                    inQuote = char;
+                    continue;
+                }
+
+                if (char === '{') {
+                    stack.push(index + 1);
+                } else if (char === '}') {
+                    const startLine = stack.pop();
+                    if (Number.isInteger(startLine) && (index + 1) > startLine) {
+                        ranges.push({ startLine, endLine: index + 1 });
+                    }
+                }
+            }
+        }
+
+        return ranges;
+    }
+
+    getIndentLevel(line) {
+        let level = 0;
+        for (let i = 0; i < line.length; i += 1) {
+            if (line[i] === ' ') {
+                level += 1;
+            } else if (line[i] === '\t') {
+                level += TAB_WIDTH_FOR_INDENT;
+            } else {
+                break;
+            }
+        }
+        return level;
+    }
+
+    computeIndentFoldRanges(lines) {
+        const ranges = [];
+
+        for (let i = 0; i < lines.length - 1; i += 1) {
+            const current = lines[i];
+            if (!current.trim()) continue;
+
+            let nextIndex = i + 1;
+            while (nextIndex < lines.length && !lines[nextIndex].trim()) {
+                nextIndex += 1;
+            }
+            if (nextIndex >= lines.length) continue;
+
+            const baseIndent = this.getIndentLevel(current);
+            const nextIndent = this.getIndentLevel(lines[nextIndex]);
+            if (nextIndent <= baseIndent) continue;
+
+            let endLine = nextIndex + 1;
+            for (let j = nextIndex + 1; j < lines.length; j += 1) {
+                const candidate = lines[j];
+                if (!candidate.trim()) {
+                    endLine = j + 1;
+                    continue;
+                }
+
+                const candidateIndent = this.getIndentLevel(candidate);
+                if (candidateIndent <= baseIndent) break;
+                endLine = j + 1;
+            }
+
+            if (endLine > (i + 1)) {
+                ranges.push({ startLine: i + 1, endLine });
+            }
+        }
+
+        return ranges;
+    }
+
+    getFoldableRanges(text = this.stateStore.getActiveTab()?.content || '') {
+        const lines = `${text || ''}`.replaceAll('\r\n', '\n').split('\n');
+        const brace = this.computeBraceFoldRanges(lines);
+        const indent = this.computeIndentFoldRanges(lines);
+        return this.normalizeCollapsedRanges([...brace, ...indent]);
+    }
+
+    buildFoldedDisplay(text, collapsed) {
+        const lines = `${text || ''}`.replaceAll('\r\n', '\n').split('\n');
+        const displayLines = [];
+        const lineMap = [];
+        const normalized = this.normalizeCollapsedRanges(collapsed);
+
+        let line = 1;
+        let rangeIndex = 0;
+
+        while (line <= lines.length) {
+            while (rangeIndex < normalized.length && normalized[rangeIndex].startLine < line) {
+                rangeIndex += 1;
+            }
+
+            const currentRange = normalized[rangeIndex];
+            if (currentRange && currentRange.startLine === line) {
+                const hiddenCount = Math.max(0, currentRange.endLine - currentRange.startLine);
+                const header = lines[line - 1] || '';
+                displayLines.push(`${header}  ... [${hiddenCount} lines folded]`);
+                lineMap.push(line);
+                line = currentRange.endLine + 1;
+                rangeIndex += 1;
+                continue;
+            }
+
+            displayLines.push(lines[line - 1] || '');
+            lineMap.push(line);
+            line += 1;
+        }
+
+        return {
+            text: displayLines.join('\n'),
+            displayToRawLineMap: lineMap
+        };
+    }
+
+    toggleFoldAtDisplayLine(displayLine) {
+        const activeTab = this.stateStore.getActiveTab();
+        if (!activeTab) return false;
+
+        const rawLine = this.toRawLineFromDisplayLine(displayLine);
+        const foldState = this.getActiveFoldState();
+        if (!foldState) return false;
+
+        const existingIndex = foldState.collapsed.findIndex((range) => range.startLine === rawLine);
+        if (existingIndex >= 0) {
+            foldState.collapsed.splice(existingIndex, 1);
+            foldState.collapsed = this.normalizeCollapsedRanges(foldState.collapsed);
+            this.renderActiveTab();
+            return true;
+        }
+
+        const foldable = this.getFoldableRanges(activeTab.content || '');
+        const target = foldable.find((range) => range.startLine === rawLine);
+        if (!target) return false;
+
+        foldState.collapsed = this.normalizeCollapsedRanges([
+            ...foldState.collapsed.filter((range) => !(target.startLine <= range.startLine && target.endLine >= range.endLine)),
+            target
+        ]);
+
+        this.renderActiveTab();
+        return true;
+    }
+
+    unfoldAtDisplayLine(displayLine) {
+        const foldState = this.getActiveFoldState();
+        if (!foldState || foldState.collapsed.length === 0) return false;
+
+        const rawLine = this.toRawLineFromDisplayLine(displayLine);
+        const existingIndex = foldState.collapsed.findIndex((range) => range.startLine === rawLine);
+        if (existingIndex === -1) return false;
+
+        foldState.collapsed.splice(existingIndex, 1);
+        foldState.collapsed = this.normalizeCollapsedRanges(foldState.collapsed);
+        this.renderActiveTab();
+        return true;
+    }
+
+    unfoldAll() {
+        const foldState = this.getActiveFoldState();
+        if (!foldState || foldState.collapsed.length === 0) return false;
+        foldState.collapsed = [];
+        this.renderActiveTab();
+        return true;
     }
 
     setContent(value) {
@@ -37,6 +501,7 @@ export class EditorController {
     }
 
     getSelectedText() {
+        if (this.isFoldedViewActive()) return '';
         const { start, end } = this.getSelectionOffsets();
         if (start === end) return '';
         return this.getContent().slice(start, end);
@@ -57,8 +522,11 @@ export class EditorController {
 
     syncModelFromEditor() {
         const normalizedText = this.getContent();
+        const offsets = this.getSelectionOffsets();
+        this.recordHistoryBeforeChange(normalizedText, offsets.start, offsets.end, true);
         this.stateStore.updateActiveTabContent(normalizedText);
-        this.updateHighlightMode(normalizedText.length, this.getLanguage());
+        this.refreshFoldMetadata(normalizedText, []);
+        this.updateHighlightMode(normalizedText.length, this.getMode());
         this.scheduleHighlight();
         this.lineNumbers.updateFromText(normalizedText);
         this.statusBar.scheduleUpdate();
@@ -238,22 +706,32 @@ export class EditorController {
         return true;
     }
 
-    applyTextChange(nextText, nextStart, nextEnd = nextStart) {
+    applyTextChange(nextText, nextStart, nextEnd = nextStart, options = {}) {
+        const shouldRecordHistory = options.recordHistory !== false;
+        if (shouldRecordHistory) {
+            this.recordHistoryBeforeChange(nextText, nextStart, nextEnd, true);
+        }
+
         this.stateStore.updateActiveTabContent(nextText);
         const activeTab = this.stateStore.getActiveTab();
 
         this.setContent(nextText);
+        this.refreshFoldMetadata(nextText, []);
         this.scheduleHighlight();
         this.lineNumbers.updateFromText(nextText);
         this.statusBar.scheduleUpdate();
         this.setSelectionOffsets(nextStart, nextEnd);
+
+        if (!shouldRecordHistory) {
+            this.syncHistoryFromCurrentTab();
+        }
 
         if (activeTab) {
             this.onActiveTitleChange(activeTab.title);
         }
     }
 
-    updateHighlightMode(contentLength = this.getContent().length, language = this.getLanguage()) {
+    updateHighlightMode(contentLength = this.getContent().length, mode = this.getMode()) {
         const shouldEnable = true;
         this.highlightEnabled = shouldEnable;
 
@@ -286,19 +764,36 @@ export class EditorController {
 
     renderActiveTab() {
         const activeTab = this.stateStore.getActiveTab();
-        this.setContent(activeTab ? activeTab.content : '');
-        this.editor.readOnly = !activeTab;
+        const rawText = activeTab ? (activeTab.content || '') : '';
+        const foldState = activeTab ? this.getActiveFoldState() : null;
+        if (foldState) {
+            foldState.collapsed = this.syncCollapsedWithFoldableRanges(rawText, foldState.collapsed || []);
+        }
+        const collapsed = foldState?.collapsed || [];
+        this.refreshFoldMetadata(rawText, collapsed);
+
+        if (activeTab && collapsed.length > 0) {
+            const folded = this.buildFoldedDisplay(rawText, collapsed);
+            this.displayToRawLineMap = folded.displayToRawLineMap;
+            this.setContent(folded.text);
+        } else {
+            this.displayToRawLineMap = null;
+            this.setContent(rawText);
+        }
+
+        this.editor.readOnly = !activeTab || (collapsed.length > 0);
         this.editor.scrollTop = activeTab?.scrollTop || 0;
         this.editor.scrollLeft = 0;
-        this.updateHighlightMode(this.getContent().length, this.getLanguage());
+        this.updateHighlightMode(this.getContent().length, this.getMode());
         this.renderHighlight();
-        this.lineNumbers.updateFromText(this.getContent());
+        this.lineNumbers.updateFromText(this.getDisplayContent());
         this.statusBar.scheduleUpdate();
         this.syncHighlightScroll();
+        this.syncHistoryFromCurrentTab();
     }
 
-    getLanguage() {
-        return this.stateStore.getActiveTab()?.language || 'markdown';
+    getMode() {
+        return this.stateStore.getActiveTab()?.mode || 'markdown';
     }
 
     renderHighlight() {
@@ -307,12 +802,12 @@ export class EditorController {
             return;
         }
 
-        const content = this.getContent();
-        this.highlightLayer.innerHTML = highlightText(content, this.getLanguage());
+        const content = this.getDisplayContent();
+        this.highlightLayer.innerHTML = highlightText(content, this.getMode());
     }
 
     scheduleHighlight() {
-        const contentLength = this.getContent().length;
+        const contentLength = this.getDisplayContent().length;
         if (!this.highlightEnabled) return;
 
         if (contentLength > LARGE_CONTENT_THRESHOLD) {
@@ -350,9 +845,8 @@ export class EditorController {
         this.highlightLayer.style.transform = `translate(${-this.editor.scrollLeft}px, ${-this.editor.scrollTop}px)`;
     }
 
-    setLanguage(language) {
-        this.stateStore.updateActiveTabLanguage(language);
-        this.updateHighlightMode(this.getContent().length, language);
+    setMode(mode) {
+        this.updateHighlightMode(this.getContent().length, mode);
         this.renderHighlight();
     }
 
@@ -368,6 +862,27 @@ export class EditorController {
         });
 
         this.editor.addEventListener('keydown', (event) => {
+            const isFolded = this.isFoldedViewActive();
+            if (event.ctrlKey && event.shiftKey && event.code === 'BracketLeft') {
+                event.preventDefault();
+                const line = this.getLineNumberFromOffset(this.getSelectionOffsets().start, this.getDisplayContent());
+                this.toggleFoldAtDisplayLine(line);
+                return;
+            }
+
+            if (event.ctrlKey && event.shiftKey && event.code === 'BracketRight') {
+                event.preventDefault();
+                const line = this.getLineNumberFromOffset(this.getSelectionOffsets().start, this.getDisplayContent());
+                if (!this.unfoldAtDisplayLine(line)) {
+                    this.unfoldAll();
+                }
+                return;
+            }
+
+            if (isFolded) {
+                return;
+            }
+
             const offsets = this.getSelectionOffsets();
             if (!offsets) return;
 
@@ -468,7 +983,7 @@ export class EditorController {
                 event.preventDefault();
 
                 // In markdown, allow natural fence typing (```), don't force-pair consecutive backticks.
-                if (event.key === '`' && this.getLanguage() === 'markdown') {
+                if (event.key === '`' && this.getMode() === 'markdown') {
                     const prevChar = start > 0 ? text[start - 1] : '';
                     if (prevChar === '`') {
                         const nextText = `${text.slice(0, start)}\`${text.slice(end)}`;

@@ -21,6 +21,10 @@
                     <img class="sidebar-icon" src="assets/icon-decode.svg" alt="" aria-hidden="true">
                     <span>Decode</span>
                 </button>
+                <button id="search-menu-btn" class="sidebar-item" type="button" aria-label="Search" aria-expanded="false">
+                    <img class="sidebar-icon" src="assets/icon-query.svg" alt="" aria-hidden="true">
+                    <span>Search</span>
+                </button>
                 <button id="format-json-btn" class="sidebar-item" type="button" aria-label="Format" aria-expanded="false" hidden>
                     <img class="sidebar-icon" src="assets/icon-format.svg" alt="" aria-hidden="true">
                     <span>Format</span>
@@ -35,10 +39,15 @@
                     <button id="download-tab-btn" class="submenu-item" type="button" role="menuitem">Download tab content</button>
                 </div>
                 <div id="decode-submenu" class="sidebar-submenu" role="menu" aria-label="Decode actions" hidden>
+                    <button id="decode-escaped-btn" class="submenu-item" type="button" role="menuitem">Unescape escaped string</button>
                     <button id="decode-url-btn" class="submenu-item" type="button" role="menuitem">From URL encoded</button>
                     <button id="decode-unicode-btn" class="submenu-item" type="button" role="menuitem">From Unicode escape</button>
                     <button id="decode-jwt-payload-btn" class="submenu-item" type="button" role="menuitem">From JWT payload</button>
                     <button id="decode-jwt-header-btn" class="submenu-item" type="button" role="menuitem">From JWT header</button>
+                </div>
+                <div id="search-submenu" class="sidebar-submenu" role="menu" aria-label="Search actions" hidden>
+                    <button id="search-open-btn" class="submenu-item" type="button" role="menuitem">Search</button>
+                    <button id="find-replace-open-btn" class="submenu-item" type="button" role="menuitem">Find and Replace</button>
                 </div>
                 <div id="format-json-submenu" class="sidebar-submenu" role="menu" aria-label="JSON format actions" hidden>
                     <button id="format-json-pretty-btn" class="submenu-item" type="button" role="menuitem">Pretty</button>
@@ -51,7 +60,27 @@
                 <div class="tab-headers" role="tablist" aria-label="Editor tabs">
                     <div class="tab-add" id="add-tab" role="button" aria-label="Add tab" tabindex="0">+</div>
                 </div>
-                <div class="tab-content">
+                <div class="tab-content" data-mode="markdown">
+                    <section id="find-widget" class="find-widget" aria-label="Find and replace" hidden>
+                        <div class="find-row">
+                            <button id="find-toggle-replace" class="find-icon-btn" type="button" aria-label="Toggle replace" aria-expanded="true">v</button>
+                            <input id="find-input" class="find-input" type="text" placeholder="Find" autocomplete="off">
+                            <button id="find-prev" class="find-icon-btn" type="button" aria-label="Previous match">^</button>
+                            <button id="find-next" class="find-icon-btn" type="button" aria-label="Next match">v</button>
+                            <span id="find-count" class="find-count">0 / 0</span>
+                            <button id="find-match-case" class="find-toggle" type="button" aria-pressed="false">Aa</button>
+                            <button id="find-whole-word" class="find-toggle" type="button" aria-pressed="false">W</button>
+                            <button id="find-use-regex" class="find-toggle" type="button" aria-pressed="false">.*</button>
+                            <button id="find-close" class="find-icon-btn" type="button" aria-label="Close find">x</button>
+                        </div>
+                        <div id="replace-row" class="find-row">
+                            <span class="find-row-spacer" aria-hidden="true"></span>
+                            <input id="replace-input" class="find-input" type="text" placeholder="Replace" autocomplete="off">
+                            <button id="replace-one" class="find-action" type="button">Replace</button>
+                            <button id="replace-all" class="find-action" type="button">Replace All</button>
+                        </div>
+                        <div id="find-error" class="find-error" hidden>Invalid regular expression</div>
+                    </section>
                     <div class="editor-shell">
                         <div id="line-numbers" class="line-numbers" aria-hidden="true"></div>
                         <div class="editor-pane">
@@ -59,14 +88,41 @@
                             <textarea id="tab-editor" class="tab-editor" spellcheck="false" placeholder="Type your notes here..."></textarea>
                         </div>
                     </div>
+                    <div id="diff-mode-shell" class="diff-mode-shell">
+                        <div class="diff-inputs">
+                            <section class="diff-input-card" aria-label="Diff content 1">
+                                <div class="diff-card-title">Content 1</div>
+                                <div class="diff-input-shell">
+                                    <div class="diff-line-numbers" aria-hidden="true">
+                                        <div id="diff-left-line-numbers" class="diff-line-numbers-viewport"></div>
+                                    </div>
+                                    <textarea id="diff-content-left" class="diff-input-editor" spellcheck="false" placeholder="Paste original content..."></textarea>
+                                </div>
+                            </section>
+                            <section class="diff-input-card" aria-label="Diff content 2">
+                                <div class="diff-card-title">Content 2</div>
+                                <div class="diff-input-shell">
+                                    <div class="diff-line-numbers" aria-hidden="true">
+                                        <div id="diff-right-line-numbers" class="diff-line-numbers-viewport"></div>
+                                    </div>
+                                    <textarea id="diff-content-right" class="diff-input-editor" spellcheck="false" placeholder="Paste updated content..."></textarea>
+                                </div>
+                            </section>
+                        </div>
+                        <section class="diff-output-card" aria-label="Diff result">
+                            <div class="diff-card-title">Diff</div>
+                            <div id="diff-output" class="diff-output"></div>
+                        </section>
+                    </div>
                     <div class="status-bar" aria-live="polite">
                         <span id="status-position" class="status-item">Ln 1, Col 1</span>
                         <span id="status-lines" class="status-item">Lines 1</span>
                         <span id="status-chars" class="status-item">Chars 0</span>
-                        <label class="status-language-wrap" for="status-language">Lang</label>
-                        <select id="status-language" class="status-language" aria-label="Editor language">
+                        <label class="status-language-wrap" for="status-mode">Mode</label>
+                        <select id="status-mode" class="status-language" aria-label="Editor mode">
                             <option value="markdown" selected>Markdown</option>
                             <option value="json">JSON</option>
+                            <option value="diff">Diff</option>
                             <option value="yaml">YAML</option>
                             <option value="python">Python</option>
                             <option value="java">Java</option>
@@ -136,6 +192,17 @@ $ = root JSON
 For mixed logs/SSE text, JPL runs per detected JSON chunk.</pre>
                     </div>
                 </section>
+            </aside>
+
+            <aside id="search-panel" class="search-panel" aria-label="Fuzzy search panel" hidden>
+                <div class="search-panel-header">
+                    <div class="search-panel-title">Search</div>
+                    <button id="search-panel-close" class="query-close" type="button" aria-label="Close search panel">x</button>
+                </div>
+                <label for="search-input" class="query-label">Fuzzy query</label>
+                <input id="search-input" class="search-input" type="text" placeholder="Search across all code tabs..." autocomplete="off">
+                <div id="search-result-meta" class="query-result-meta">Ready</div>
+                <div id="search-results" class="search-results" role="list" aria-label="Search matches"></div>
             </aside>
         </div>
 

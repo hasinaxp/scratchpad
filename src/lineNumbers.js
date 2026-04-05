@@ -8,6 +8,8 @@ export class LineNumbersManager {
         this.lineHeightPx = 18;
         this.totalLineCount = 1;
         this.rafId = 0;
+        this.onLineNumberClick = null;
+        this.foldIndicatorResolver = null;
 
         this.spacer = document.createElement('div');
         this.spacer.className = 'line-numbers-spacer';
@@ -16,6 +18,25 @@ export class LineNumbersManager {
         this.viewport.className = 'line-numbers-viewport';
 
         this.lineNumbers.append(this.spacer, this.viewport);
+
+        this.viewport.addEventListener('click', (event) => {
+            const target = event.target;
+            if (!(target instanceof Element)) return;
+            const row = target.closest('.line-number');
+            if (!row || !this.onLineNumberClick) return;
+
+            const value = Number.parseInt(row.getAttribute('data-line') || '', 10);
+            if (!Number.isInteger(value) || value <= 0) return;
+            this.onLineNumberClick(value);
+        });
+    }
+
+    setLineNumberClickHandler(handler) {
+        this.onLineNumberClick = typeof handler === 'function' ? handler : null;
+    }
+
+    setFoldIndicatorResolver(resolver) {
+        this.foldIndicatorResolver = typeof resolver === 'function' ? resolver : null;
     }
 
     getTotalLineCount() {
@@ -39,7 +60,7 @@ export class LineNumbersManager {
 
     updateWidth() {
         const digits = Math.max(2, String(this.totalLineCount).length);
-        const width = `${digits + 1.4}ch`;
+        const width = `${digits + 3.2}ch`;
         this.lineNumbers.style.width = width;
         this.lineNumbers.style.minWidth = width;
     }
@@ -67,7 +88,13 @@ export class LineNumbersManager {
 
         const html = [];
         for (let line = firstVisibleLine; line <= lastVisibleLine; line += 1) {
-            html.push(`<div class="line-number">${line}</div>`);
+            const state = this.foldIndicatorResolver ? (this.foldIndicatorResolver(line) || 'none') : 'none';
+            html.push(
+                `<div class="line-number" data-line="${line}">`
+                + `<span class="line-fold-indicator line-fold-${state}" aria-hidden="true"></span>`
+                + `<span class="line-number-label">${line}</span>`
+                + '</div>'
+            );
         }
 
         const y = ((firstVisibleLine - 1) * this.lineHeightPx) - this.editor.scrollTop;

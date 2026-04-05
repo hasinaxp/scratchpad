@@ -16,7 +16,11 @@ const createTabRecord = (state, content = '') => {
         title: deriveTabTitle(content, index),
         content,
         scrollTop: 0,
-        language: 'markdown'
+        mode: 'markdown',
+        diff: {
+            left: '',
+            right: ''
+        }
     };
 
     state.nextTabNumber += 1;
@@ -42,7 +46,11 @@ const migrateLegacyState = () => {
             title: deriveTabTitle(content, index + 1),
             content,
             scrollTop: 0,
-            language: 'markdown'
+            mode: 'markdown',
+            diff: {
+                left: '',
+                right: ''
+            }
         });
     });
 
@@ -84,7 +92,13 @@ export class EditorStateStore {
                 ...tab,
                 title: deriveTabTitle(tab.content || '', index + 1),
                 scrollTop: typeof tab.scrollTop === 'number' ? tab.scrollTop : 0,
-                language: typeof tab.language === 'string' ? tab.language : 'markdown'
+                mode: typeof tab.mode === 'string'
+                    ? tab.mode
+                    : (typeof tab.language === 'string' ? tab.language : 'markdown'),
+                diff: {
+                    left: typeof tab?.diff?.left === 'string' ? tab.diff.left : '',
+                    right: typeof tab?.diff?.right === 'string' ? tab.diff.right : ''
+                }
             }));
 
             return parsed;
@@ -185,11 +199,19 @@ export class EditorStateStore {
         this.scheduleSave(180);
     }
 
-    updateActiveTabLanguage(language) {
+    updateActiveTabMode(mode) {
         const activeTab = this.getActiveTab();
         if (!activeTab) return;
 
-        activeTab.language = language;
+        activeTab.mode = mode;
+        this.saveImmediate();
+    }
+
+    updateActiveTabDiffContent(side, value) {
+        const activeTab = this.getActiveTab();
+        if (!activeTab || !activeTab.diff || (side !== 'left' && side !== 'right')) return;
+
+        activeTab.diff[side] = value;
         this.saveImmediate();
     }
 }
