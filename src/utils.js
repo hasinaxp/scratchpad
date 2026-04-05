@@ -20,3 +20,10 @@ export const deriveTabTitle = (content, fallbackNumber = 1) => {
 };
 
 export const createTabId = () => `tab-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+
+export const escapeHtml = (text) => `${text || ''}`
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+
+export const escapeRegExp = (text) => `${text || ''}`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

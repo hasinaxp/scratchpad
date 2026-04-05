@@ -10,6 +10,7 @@ export class LineNumbersManager {
         this.rafId = 0;
         this.onLineNumberClick = null;
         this.foldIndicatorResolver = null;
+        this.lineLabelResolver = null;
 
         this.spacer = document.createElement('div');
         this.spacer.className = 'line-numbers-spacer';
@@ -37,6 +38,10 @@ export class LineNumbersManager {
 
     setFoldIndicatorResolver(resolver) {
         this.foldIndicatorResolver = typeof resolver === 'function' ? resolver : null;
+    }
+
+    setLineLabelResolver(resolver) {
+        this.lineLabelResolver = typeof resolver === 'function' ? resolver : null;
     }
 
     getTotalLineCount() {
@@ -89,10 +94,12 @@ export class LineNumbersManager {
         const html = [];
         for (let line = firstVisibleLine; line <= lastVisibleLine; line += 1) {
             const state = this.foldIndicatorResolver ? (this.foldIndicatorResolver(line) || 'none') : 'none';
+            const resolvedLabel = this.lineLabelResolver ? this.lineLabelResolver(line) : line;
+            const label = Number.isInteger(resolvedLabel) && resolvedLabel > 0 ? resolvedLabel : line;
             html.push(
                 `<div class="line-number" data-line="${line}">`
                 + `<span class="line-fold-indicator line-fold-${state}" aria-hidden="true"></span>`
-                + `<span class="line-number-label">${line}</span>`
+                + `<span class="line-number-label">${label}</span>`
                 + '</div>'
             );
         }

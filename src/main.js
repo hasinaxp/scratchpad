@@ -9,6 +9,7 @@ import { execute as executeJpl } from './jpl.js';
 import { highlightText } from './syntaxHighlighter.js';
 import { DiffModeController } from './diffMode.js';
 import { findTabMatches } from './fuzzySearch.js';
+import { escapeHtml } from './utils.js';
 import {
     buildSearchRegex,
     getMatches,
@@ -474,6 +475,23 @@ const updateQueryButtonState = () => {
     queryButton.disabled = false;
 };
 
+const refreshEditorDependentUiState = ({
+    refreshFind = true,
+    refreshSearch = false
+} = {}) => {
+    updateDecodeButtonState();
+    updateFormatJsonButtonState();
+    updateQueryButtonState();
+
+    if (refreshFind && findState.isOpen) {
+        updateFindMatchState({ keepSelection: true });
+    }
+
+    if (refreshSearch && !searchPanel.hidden) {
+        runSearch();
+    }
+};
+
 const prettyPrint = (value) => JSON.stringify(value, null, 2);
 
 const setQueryResultText = (text) => {
@@ -669,11 +687,6 @@ const captureEditorSelection = () => {
     lastSelectionRange = { start, end };
 };
 
-const escapeHtml = (text) => `${text || ''}`
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
-
 const runSearch = () => {
     const query = (searchInput.value || '').trim();
     if (!query) {
@@ -751,19 +764,15 @@ const render = () => {
         statusBarManager.scheduleUpdate();
     }
 
-    updateDecodeButtonState();
-    updateFormatJsonButtonState();
-    updateQueryButtonState();
+    refreshEditorDependentUiState({
+        refreshFind: !isDiffMode,
+        refreshSearch: true
+    });
 
     if (isDiffMode) {
         setFindWidgetOpen(false);
     } else if (findState.isOpen) {
         setFindWidgetOpen(true);
-        updateFindMatchState({ keepSelection: true });
-    }
-
-    if (!searchPanel.hidden) {
-        runSearch();
     }
 };
 
@@ -807,6 +816,7 @@ lineNumbersManager.setLineNumberClickHandler((line) => {
 });
 
 lineNumbersManager.setFoldIndicatorResolver((line) => editorController.getFoldIndicatorForDisplayLine(line));
+lineNumbersManager.setLineLabelResolver((line) => editorController.getLineLabelForDisplayLine(line));
 
 diffModeController = new DiffModeController({
     leftEditor: diffContentLeft,
@@ -826,16 +836,12 @@ diffModeController = new DiffModeController({
     }
 });
 
-updateDecodeButtonState();
-updateFormatJsonButtonState();
-updateQueryButtonState();
+refreshEditorDependentUiState();
 
 statusMode.addEventListener('change', () => {
     stateStore.updateActiveTabMode(statusMode.value);
     editorController.setMode(statusMode.value);
     render();
-    updateFormatJsonButtonState();
-    updateQueryButtonState();
 });
 
 filesMenuButton.addEventListener('click', () => {
@@ -1086,7 +1092,7 @@ const applyDecodedSelection = (decoded) => {
 
     editorController.replaceSelectionText(decoded);
     lastSelectionRange = null;
-    updateDecodeButtonState();
+    refreshEditorDependentUiState();
     setDecodeMenuOpen(false);
 };
 
@@ -1115,7 +1121,7 @@ const applyJsonFormattingMode = (mode) => {
     const nextStart = Math.min(start, result.output.length);
     const nextEnd = Math.min(end, result.output.length);
     editorController.applyTextChange(result.output, nextStart, nextEnd);
-    updateFormatJsonButtonState();
+    refreshEditorDependentUiState();
     setFormatJsonMenuOpen(false);
 };
 
@@ -1129,16 +1135,12 @@ formatJsonMinifiedButton.addEventListener('click', () => {
 
 const refreshDecodeState = () => {
     if ((stateStore.getActiveTab()?.mode || 'markdown') === 'diff') {
-        updateDecodeButtonState();
-        updateFormatJsonButtonState();
-        updateQueryButtonState();
+        refreshEditorDependentUiState({ refreshFind: false });
         return;
     }
 
     captureEditorSelection();
-    updateDecodeButtonState();
-    updateFormatJsonButtonState();
-    updateQueryButtonState();
+    refreshEditorDependentUiState();
 };
 
 editor.addEventListener('select', refreshDecodeState);
@@ -1179,12 +1181,7 @@ window.addEventListener('keydown', (event) => {
         if (!isMainEditorFocused) return;
         event.preventDefault();
         editorController.undo();
-        updateDecodeButtonState();
-        updateFormatJsonButtonState();
-        updateQueryButtonState();
-        if (findState.isOpen) {
-            updateFindMatchState({ keepSelection: true });
-        }
+        refreshEditorDependentUiState({ refreshFind: true, refreshSearch: true });
         return;
     }
 
@@ -1192,12 +1189,7 @@ window.addEventListener('keydown', (event) => {
         if (!isMainEditorFocused) return;
         event.preventDefault();
         editorController.redo();
-        updateDecodeButtonState();
-        updateFormatJsonButtonState();
-        updateQueryButtonState();
-        if (findState.isOpen) {
-            updateFindMatchState({ keepSelection: true });
-        }
+        refreshEditorDependentUiState({ refreshFind: true, refreshSearch: true });
         return;
     }
 

@@ -1,7 +1,4 @@
-const escapeHtml = (text) => text
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
+import { escapeHtml } from './utils.js';
 
 const cloneRegexGlobal = (regex) => {
     const flags = regex.flags.includes('g') ? regex.flags : `${regex.flags}g`;

@@ -4,7 +4,8 @@ import { highlightText } from './syntaxHighlighter.js';
 const LARGE_CONTENT_THRESHOLD = 1_000_000;
 const LARGE_CONTENT_HIGHLIGHT_DELAY = 140;
 const TAB_WIDTH_FOR_INDENT = 4;
-const HISTORY_LIMIT = 500;
+const HISTORY_LIMIT = 200;
+const MAX_HISTORY_TABS = 50;
 
 export class EditorController {
     constructor({ editor, highlightLayer, stateStore, lineNumbers, statusBar, onActiveTitleChange }) {
@@ -64,14 +65,27 @@ export class EditorController {
 
     getHistoryForTab(tabId) {
         if (!tabId) return null;
-        if (!this.historyByTabId.has(tabId)) {
-            this.historyByTabId.set(tabId, {
-                undo: [],
-                redo: [],
-                lastSnapshot: null
-            });
+        const existing = this.historyByTabId.get(tabId);
+        if (existing) {
+            this.historyByTabId.delete(tabId);
+            this.historyByTabId.set(tabId, existing);
+            return existing;
         }
-        return this.historyByTabId.get(tabId);
+
+        while (this.historyByTabId.size >= MAX_HISTORY_TABS) {
+            const oldestKey = this.historyByTabId.keys().next().value;
+            if (!oldestKey) break;
+            this.historyByTabId.delete(oldestKey);
+        }
+
+        const created = {
+            undo: [],
+            redo: [],
+            lastSnapshot: null
+        };
+
+        this.historyByTabId.set(tabId, created);
+        return created;
     }
 
     getActiveHistory() {
@@ -85,6 +99,34 @@ export class EditorController {
         stack.splice(0, stack.length - HISTORY_LIMIT);
     }
 
+    getHistoryCharBudget(lastSnapshotTextLength = 0) {
+        if (lastSnapshotTextLength >= 750_000) return 6_000_000;
+        if (lastSnapshotTextLength >= 250_000) return 12_000_000;
+        return 24_000_000;
+    }
+
+    estimateHistoryChars(history) {
+        let total = 0;
+        if (history.lastSnapshot?.text) total += history.lastSnapshot.text.length;
+        for (const item of history.undo) total += item.text.length;
+        for (const item of history.redo) total += item.text.length;
+        return total;
+    }
+
+    trimHistoryByBudget(history) {
+        const budget = this.getHistoryCharBudget(history.lastSnapshot?.text?.length || 0);
+        let total = this.estimateHistoryChars(history);
+
+        while (total > budget && (history.undo.length > 0 || history.redo.length > 0)) {
+            if (history.undo.length > 0) {
+                history.undo.shift();
+            } else {
+                history.redo.shift();
+            }
+            total = this.estimateHistoryChars(history);
+        }
+    }
+
     pushUndoSnapshot(history, snapshot) {
         if (!history || !snapshot) return;
         const last = history.undo[history.undo.length - 1];
@@ -93,6 +135,7 @@ export class EditorController {
         }
         history.undo.push(snapshot);
         this.clampHistoryStack(history.undo);
+        this.trimHistoryByBudget(history);
     }
 
     syncHistoryFromCurrentTab() {
@@ -141,6 +184,8 @@ export class EditorController {
             start: nextStart,
             end: nextEnd
         };
+
+        this.trimHistoryByBudget(history);
     }
 
     undo() {
@@ -166,6 +211,7 @@ export class EditorController {
 
         history.redo.push(current);
         this.clampHistoryStack(history.redo);
+        this.trimHistoryByBudget(history);
 
         this.applyTextChange(previous.text, previous.start, previous.end, {
             recordHistory: false
@@ -224,6 +270,10 @@ export class EditorController {
         if (this.collapsedStartLines.has(rawLine)) return 'collapsed';
         if (this.foldableRangeByStartLine.has(rawLine)) return 'expanded';
         return 'none';
+    }
+
+    getLineLabelForDisplayLine(displayLine) {
+        return this.toRawLineFromDisplayLine(displayLine);
     }
 
     toRawLineFromDisplayLine(displayLine) {
@@ -525,15 +575,32 @@ export class EditorController {
         const offsets = this.getSelectionOffsets();
         this.recordHistoryBeforeChange(normalizedText, offsets.start, offsets.end, true);
         this.stateStore.updateActiveTabContent(normalizedText);
-        this.refreshFoldMetadata(normalizedText, []);
-        this.updateHighlightMode(normalizedText.length, this.getMode());
+        this.syncAfterContentMutation(normalizedText, {
+            collapsedRanges: [],
+            syncHistory: false
+        });
+    }
+
+    syncAfterContentMutation(nextText, {
+        collapsedRanges = [],
+        syncHistory = false,
+        updateTitle = true
+    } = {}) {
+        this.refreshFoldMetadata(nextText, collapsedRanges);
+        this.updateHighlightMode(nextText.length, this.getMode());
         this.scheduleHighlight();
-        this.lineNumbers.updateFromText(normalizedText);
+        this.lineNumbers.updateFromText(this.getDisplayContent());
         this.statusBar.scheduleUpdate();
 
-        const activeTab = this.stateStore.getActiveTab();
-        if (activeTab) {
-            this.onActiveTitleChange(activeTab.title);
+        if (syncHistory) {
+            this.syncHistoryFromCurrentTab();
+        }
+
+        if (updateTitle) {
+            const activeTab = this.stateStore.getActiveTab();
+            if (activeTab) {
+                this.onActiveTitleChange(activeTab.title);
+            }
         }
     }
 
@@ -713,22 +780,14 @@ export class EditorController {
         }
 
         this.stateStore.updateActiveTabContent(nextText);
-        const activeTab = this.stateStore.getActiveTab();
 
         this.setContent(nextText);
-        this.refreshFoldMetadata(nextText, []);
-        this.scheduleHighlight();
-        this.lineNumbers.updateFromText(nextText);
-        this.statusBar.scheduleUpdate();
         this.setSelectionOffsets(nextStart, nextEnd);
-
-        if (!shouldRecordHistory) {
-            this.syncHistoryFromCurrentTab();
-        }
-
-        if (activeTab) {
-            this.onActiveTitleChange(activeTab.title);
-        }
+        this.syncAfterContentMutation(nextText, {
+            collapsedRanges: [],
+            syncHistory: !shouldRecordHistory,
+            updateTitle: true
+        });
     }
 
     updateHighlightMode(contentLength = this.getContent().length, mode = this.getMode()) {
@@ -784,12 +843,13 @@ export class EditorController {
         this.editor.readOnly = !activeTab || (collapsed.length > 0);
         this.editor.scrollTop = activeTab?.scrollTop || 0;
         this.editor.scrollLeft = 0;
-        this.updateHighlightMode(this.getContent().length, this.getMode());
+        this.syncAfterContentMutation(rawText, {
+            collapsedRanges: collapsed,
+            syncHistory: true,
+            updateTitle: false
+        });
         this.renderHighlight();
-        this.lineNumbers.updateFromText(this.getDisplayContent());
-        this.statusBar.scheduleUpdate();
         this.syncHighlightScroll();
-        this.syncHistoryFromCurrentTab();
     }
 
     getMode() {

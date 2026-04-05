@@ -1,7 +1,4 @@
-const escapeHtml = (text) => text
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
+import { escapeHtml } from './utils.js';
 
 const MAX_MATRIX_CELLS = 2_000_000;
 

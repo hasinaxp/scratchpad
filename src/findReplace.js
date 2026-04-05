@@ -1,6 +1,6 @@
-const MAX_MATCHES = 20000;
+import { escapeRegExp } from './utils.js';
 
-const escapeRegExp = (text) => `${text || ''}`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const MAX_MATCHES = 20000;
 
 const buildFlags = ({ matchCase }) => `g${matchCase ? '' : 'i'}m`;
 
@@ -92,18 +92,89 @@ export const replaceAtMatch = (text, match, replacement, { useRegex, matchCase, 
     const before = source.slice(0, match.start);
     const after = source.slice(match.end);
 
-    let replaced = `${replacement || ''}`;
-    if (useRegex) {
-        const sourceBase = query || '';
-        const sourcePattern = wholeWord ? `\\b(?:${sourceBase})\\b` : sourceBase;
+    const replacementText = `${replacement || ''}`;
 
-        try {
-            const single = new RegExp(sourcePattern, `${matchCase ? '' : 'i'}m`);
-            replaced = match.value.replace(single, replacement || '');
-        } catch {
-            replaced = `${replacement || ''}`;
+    const expandReplacementTemplate = () => {
+        const execResult = match.captures;
+        if (!useRegex || !execResult) {
+            return replacementText;
         }
-    }
+
+        const fullInput = source;
+        const matchStart = match.start;
+        const matchEnd = match.end;
+        const groups = execResult.groups || {};
+        const captures = Array.from(execResult);
+
+        let out = '';
+        for (let i = 0; i < replacementText.length; i += 1) {
+            const ch = replacementText[i];
+            if (ch !== '$') {
+                out += ch;
+                continue;
+            }
+
+            const next = replacementText[i + 1] || '';
+            if (next === '$') {
+                out += '$';
+                i += 1;
+                continue;
+            }
+
+            if (next === '&') {
+                out += captures[0] || '';
+                i += 1;
+                continue;
+            }
+
+            if (next === '`') {
+                out += fullInput.slice(0, matchStart);
+                i += 1;
+                continue;
+            }
+
+            if (next === '\'') {
+                out += fullInput.slice(matchEnd);
+                i += 1;
+                continue;
+            }
+
+            if (next === '<') {
+                const close = replacementText.indexOf('>', i + 2);
+                if (close !== -1) {
+                    const name = replacementText.slice(i + 2, close);
+                    out += groups[name] ?? '';
+                    i = close;
+                    continue;
+                }
+            }
+
+            if (/[0-9]/.test(next)) {
+                const d1 = next;
+                const d2 = replacementText[i + 2] || '';
+                const candidateTwo = /[0-9]/.test(d2) ? Number.parseInt(`${d1}${d2}`, 10) : Number.NaN;
+                const candidateOne = Number.parseInt(d1, 10);
+
+                if (!Number.isNaN(candidateTwo) && candidateTwo > 0 && candidateTwo < captures.length) {
+                    out += captures[candidateTwo] ?? '';
+                    i += 2;
+                    continue;
+                }
+
+                if (candidateOne > 0 && candidateOne < captures.length) {
+                    out += captures[candidateOne] ?? '';
+                    i += 1;
+                    continue;
+                }
+            }
+
+            out += '$';
+        }
+
+        return out;
+    };
+
+    const replaced = expandReplacementTemplate();
 
     const nextText = `${before}${replaced}${after}`;
     const nextSelectionStart = before.length;
