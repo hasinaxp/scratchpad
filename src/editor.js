@@ -1,4 +1,4 @@
-import { TAB_INDENT } from './utils.js';
+import { TAB_INDENT, escapeRegExp } from './utils.js';
 import { highlightText } from './syntaxHighlighter.js';
 
 const LARGE_CONTENT_THRESHOLD = 1_000_000;
@@ -752,6 +752,122 @@ export class EditorController {
         return true;
     }
 
+    outdentSelectionOrCursor() {
+        const { start, end } = this.getSelectionOffsets();
+        const text = this.getContent();
+
+        if (start === end) {
+            const lineStart = text.lastIndexOf('\n', start - 1) + 1;
+            const prefix = text.slice(lineStart, start);
+            if (!prefix) return false;
+
+            let removeCount = 0;
+            if (prefix.endsWith('\t')) {
+                removeCount = 1;
+            } else {
+                const trailingSpaces = (prefix.match(/ +$/) || [''])[0].length;
+                removeCount = Math.min(TAB_INDENT.length, trailingSpaces);
+            }
+
+            if (removeCount <= 0) return false;
+
+            const nextStart = start - removeCount;
+            const nextText = `${text.slice(0, nextStart)}${text.slice(end)}`;
+            this.applyTextChange(nextText, nextStart);
+            return true;
+        }
+
+        const blockStart = text.lastIndexOf('\n', start - 1) + 1;
+        const blockEndIndex = text.indexOf('\n', end);
+        const blockEnd = blockEndIndex === -1 ? text.length : blockEndIndex;
+        const selectedBlock = text.slice(blockStart, blockEnd);
+        const lines = selectedBlock.split('\n');
+
+        let totalRemoved = 0;
+        let removedOnFirstLineBeforeSelection = 0;
+
+        const outdentedLines = lines.map((line, index) => {
+            let removeCount = 0;
+            if (line.startsWith('\t')) {
+                removeCount = 1;
+            } else {
+                const leadingSpaces = (line.match(/^ +/) || [''])[0].length;
+                removeCount = Math.min(TAB_INDENT.length, leadingSpaces);
+            }
+
+            if (removeCount > 0) {
+                totalRemoved += removeCount;
+                if (index === 0) {
+                    removedOnFirstLineBeforeSelection = Math.min(removeCount, Math.max(0, start - blockStart));
+                }
+            }
+
+            return line.slice(removeCount);
+        });
+
+        if (totalRemoved === 0) return false;
+
+        const outdentedBlock = outdentedLines.join('\n');
+        const nextText = `${text.slice(0, blockStart)}${outdentedBlock}${text.slice(blockEnd)}`;
+        const nextSelectionStart = Math.max(blockStart, start - removedOnFirstLineBeforeSelection);
+        const nextSelectionEnd = Math.max(nextSelectionStart, end - totalRemoved);
+        this.applyTextChange(nextText, nextSelectionStart, nextSelectionEnd);
+        return true;
+    }
+
+    duplicateSelectionOrLine() {
+        const { start, end } = this.getSelectionOffsets();
+        if (start === end) {
+            return this.duplicateSelectedLines('down');
+        }
+
+        const text = this.getContent();
+        const selectedText = text.slice(start, end);
+        const nextText = `${text.slice(0, end)}${selectedText}${text.slice(end)}`;
+        this.applyTextChange(nextText, end, end + selectedText.length);
+        return true;
+    }
+
+    selectCurrentLine() {
+        const { start } = this.getSelectionOffsets();
+        const text = this.getContent();
+        const { lineStart, lineEnd } = this.getLineRangeAt(start, text);
+        this.setSelectionOffsets(lineStart, lineEnd);
+        return true;
+    }
+
+    toggleLineComment() {
+        const mode = this.getMode();
+        const commentPrefix = mode === 'text' ? '#' : '//';
+        const commentMatcher = new RegExp(`^(\\s*)${escapeRegExp(commentPrefix)}\\s?`);
+
+        const { start, end } = this.getSelectionOffsets();
+        const text = this.getContent();
+        const { lineStart, lineEnd } = this.getSelectedLineBlockRange(start, end, text);
+        const selectedBlock = text.slice(lineStart, lineEnd);
+        const lines = selectedBlock.split('\n');
+        const nonEmptyLines = lines.filter((line) => line.trim().length > 0);
+        if (nonEmptyLines.length === 0) return false;
+
+        const shouldUncomment = nonEmptyLines.every((line) => commentMatcher.test(line));
+
+        const nextLines = lines.map((line) => {
+            if (!line.trim()) return line;
+            if (shouldUncomment) {
+                return line.replace(commentMatcher, '$1');
+            }
+
+            const indent = (line.match(/^\s*/) || [''])[0];
+            const content = line.slice(indent.length);
+            return `${indent}${commentPrefix} ${content}`;
+        });
+
+        const nextBlock = nextLines.join('\n');
+        const nextText = `${text.slice(0, lineStart)}${nextBlock}${text.slice(lineEnd)}`;
+        this.applyTextChange(nextText, lineStart, lineStart + nextBlock.length);
+        return true;
+    }
+
     handleBackspaceTabIndent() {
         const { start, end } = this.getSelectionOffsets();
         if (start !== end || start === 0) return false;
@@ -853,7 +969,11 @@ export class EditorController {
     }
 
     getMode() {
-        return this.stateStore.getActiveTab()?.mode || 'markdown';
+        const rawMode = `${this.stateStore.getActiveTab()?.mode || 'text'}`.toLowerCase();
+        if (rawMode === 'markdown' || rawMode === 'python' || rawMode === 'java' || rawMode === 'yaml') {
+            return 'text';
+        }
+        return rawMode;
     }
 
     renderHighlight() {
@@ -1017,6 +1137,11 @@ export class EditorController {
             if (event.key === 'Tab') {
                 event.preventDefault();
 
+                if (event.shiftKey) {
+                    this.outdentSelectionOrCursor();
+                    return;
+                }
+
                 if (start === end) {
                     const nextText = `${text.slice(0, start)}${TAB_INDENT}${text.slice(end)}`;
                     this.applyTextChange(nextText, start + TAB_INDENT.length);
@@ -1037,13 +1162,31 @@ export class EditorController {
                 return;
             }
 
+            if (event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === 'd') {
+                event.preventDefault();
+                this.duplicateSelectionOrLine();
+                return;
+            }
+
+            if (event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === 'l') {
+                event.preventDefault();
+                this.selectCurrentLine();
+                return;
+            }
+
+            if (event.ctrlKey && !event.shiftKey && event.key === '/') {
+                event.preventDefault();
+                this.toggleLineComment();
+                return;
+            }
+
             const quotePairs = { '"': '"', "'": "'", '`': '`' };
             const quoteChar = quotePairs[event.key];
             if (quoteChar) {
                 event.preventDefault();
 
-                // In markdown, allow natural fence typing (```), don't force-pair consecutive backticks.
-                if (event.key === '`' && this.getMode() === 'markdown') {
+                // In text mode, allow natural fence typing (```), don't force-pair consecutive backticks.
+                if (event.key === '`' && this.getMode() === 'text') {
                     const prevChar = start > 0 ? text[start - 1] : '';
                     if (prevChar === '`') {
                         const nextText = `${text.slice(0, start)}\`${text.slice(end)}`;

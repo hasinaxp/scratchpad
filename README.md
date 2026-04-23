@@ -2,14 +2,15 @@
 
 scratchpad is a browser-only editor for day-to-day notes, code snippets, JSON workflows, and quick text transforms.
 
-There is no backend. Your data stays in your browser and is persisted in localStorage.
+There is no backend. Your data stays in your browser and is persisted in IndexedDB.
 
 ## Highlights
 
 - Multi-tab editing with local persistence
-- Mode-based tabs (`markdown`, `json`, `python`, `javascript`, `text`, `diff`)
+- Mode-based tabs (`text`, `json`, `diff`, `table`)
 - Dedicated diff mode with side-by-side inputs and GitHub-style unified output
-- Syntax highlighting for supported code modes
+- Table mode with spreadsheet-style grid editing
+- Syntax highlighting for text and JSON modes
 - Powerful cross-tab fuzzy search with jump-to-result
 - VS Code-style find/replace (regex, case, whole-word, replace one/all)
 - Folding support (brace + indentation), gutter indicators, and fold toggles
@@ -34,6 +35,10 @@ There is no backend. Your data stays in your browser and is persisted in localSt
 - `Ctrl+C` (no selection): Copy current line
 - `Ctrl+X` (no selection): Cut current line
 - `Tab`: Indent cursor/selection
+- `Shift+Tab`: Outdent cursor/selection
+- `Ctrl+/`: Toggle line comment for current line/selection
+- `Ctrl+D`: Duplicate selection (or current line)
+- `Ctrl+L`: Select current line
 
 ## Run
 Visit: [https://hasinaxp.github.io/scratchpad/](https://hasinaxp.github.io/scratchpad/)

@@ -8,6 +8,7 @@ import { formatJsonContent, extractJsonChunks } from './jsonFormatting.js';
 import { execute as executeJpl } from './jpl.js';
 import { highlightText } from './syntaxHighlighter.js';
 import { DiffModeController } from './diffMode.js';
+import { TableModeController } from './tableMode.js';
 import { findTabMatches } from './fuzzySearch.js';
 import { escapeHtml } from './utils.js';
 import {
@@ -32,11 +33,15 @@ const lineNumbers = byId('line-numbers');
 const highlightLayer = byId('editor-highlight');
 const editorShell = q('.editor-shell');
 const diffModeShell = byId('diff-mode-shell');
+const tableModeShell = byId('table-mode-shell');
 const diffContentLeft = byId('diff-content-left');
 const diffContentRight = byId('diff-content-right');
 const diffLeftLineNumbers = byId('diff-left-line-numbers');
 const diffRightLineNumbers = byId('diff-right-line-numbers');
 const diffOutput = byId('diff-output');
+const tableGrid = byId('table-grid');
+const tableAddRowButton = byId('table-add-row');
+const tableAddColButton = byId('table-add-col');
 const filesMenuButton = byId('files-menu-btn');
 const decodeMenuButton = byId('decode-menu-btn');
 const searchMenuButton = byId('search-menu-btn');
@@ -48,6 +53,9 @@ const searchSubmenu = byId('search-submenu');
 const searchOpenButton = byId('search-open-btn');
 const findReplaceOpenButton = byId('find-replace-open-btn');
 const decodeEscapedButton = byId('decode-escaped-btn');
+const transformLowercaseButton = byId('transform-lowercase-btn');
+const transformUppercaseButton = byId('transform-uppercase-btn');
+const transformTitlecaseButton = byId('transform-titlecase-btn');
 const formatJsonSubmenu = byId('format-json-submenu');
 const decodeUrlButton = byId('decode-url-btn');
 const decodeUnicodeButton = byId('decode-unicode-btn');
@@ -78,6 +86,7 @@ const queryResultHighlight = byId('query-result-highlight');
 const statusPosition = byId('status-position');
 const statusLines = byId('status-lines');
 const statusChars = byId('status-chars');
+const statusWrapToggle = byId('status-wrap-toggle');
 const statusMode = byId('status-mode');
 const findWidget = byId('find-widget');
 const findToggleReplace = byId('find-toggle-replace');
@@ -115,15 +124,25 @@ const sanitizeFileName = (value) => {
 };
 
 const languageToExt = {
-    markdown: 'md',
-    python: 'py',
-    java: 'java',
-    yaml: 'yml',
+    text: 'txt',
     json: 'json',
-    diff: 'diff.txt'
+    diff: 'diff.txt',
+    table: 'csv'
 };
 
-const TEXT_MODES = new Set(['markdown', 'json', 'yaml', 'python', 'java']);
+const TEXT_MODES = new Set(['text', 'json']);
+const SUPPORTED_MODES = new Set(['text', 'json', 'diff', 'table']);
+
+const getNormalizedMode = (tab) => {
+    const rawMode = `${tab?.mode || 'text'}`.toLowerCase();
+    if (rawMode === 'markdown' || rawMode === 'python' || rawMode === 'java' || rawMode === 'yaml') {
+        return 'text';
+    }
+    if (SUPPORTED_MODES.has(rawMode)) return rawMode;
+    return 'text';
+};
+
+const isWrapEnabledForTab = (tab) => tab?.wrap !== false;
 
 const QUERY_PANEL_TRANSITION_MS = 180;
 const SEARCH_PANEL_TRANSITION_MS = 180;
@@ -156,8 +175,12 @@ const setDecodeAction = (button, enabled) => {
     button.hidden = !enabled;
 };
 
+const toTitleCase = (text) => `${text || ''}`.replace(/\S+/g, (word) => (
+    word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+));
+
 const updateDecodeButtonState = () => {
-    const mode = stateStore.getActiveTab()?.mode || 'markdown';
+    const mode = getNormalizedMode(stateStore.getActiveTab());
     if (!TEXT_MODES.has(mode)) {
         decodeMenuButton.hidden = true;
         decodeMenuButton.disabled = true;
@@ -199,19 +222,13 @@ const updateDecodeButtonState = () => {
     setDecodeAction(decodeJwtPayloadButton, Boolean(activeDecodeCandidates.jwtPayload));
     setDecodeAction(decodeJwtHeaderButton, Boolean(activeDecodeCandidates.jwtHeader));
 
-    if (!activeDecodeCandidates.hasAny) {
-        decodeMenuButton.hidden = true;
-        decodeMenuButton.disabled = true;
-        setDecodeMenuOpen(false);
-        return;
-    }
-
+    // Transform menu is available whenever there is a selection.
     decodeMenuButton.hidden = false;
     decodeMenuButton.disabled = false;
 };
 
 const updateFormatJsonButtonState = () => {
-    const mode = stateStore.getActiveTab()?.mode || 'markdown';
+    const mode = getNormalizedMode(stateStore.getActiveTab());
     if (mode !== 'json') {
         formatJsonButton.hidden = true;
         formatJsonButton.disabled = true;
@@ -290,7 +307,8 @@ const setSearchPanelOpen = (open) => {
 const getActiveCodeTab = () => {
     const tab = stateStore.getActiveTab();
     if (!tab) return null;
-    if ((tab.mode || 'markdown') === 'diff') return null;
+    const mode = getNormalizedMode(tab);
+    if (mode === 'diff' || mode === 'table') return null;
     return tab;
 };
 
@@ -460,7 +478,7 @@ const applyReplaceAll = () => {
 };
 
 const updateQueryButtonState = () => {
-    const mode = stateStore.getActiveTab()?.mode || 'markdown';
+    const mode = getNormalizedMode(stateStore.getActiveTab());
     const content = (editorController?.getContent() || '').trim();
     const canQuery = mode === 'json' && content.length > 0;
 
@@ -673,6 +691,7 @@ let editorController = null;
 let statusBarManager = null;
 let tabsView = null;
 let diffModeController = null;
+let tableModeController = null;
 let lastSelectionRange = null;
 
 const captureEditorSelection = () => {
@@ -685,6 +704,24 @@ const captureEditorSelection = () => {
     if (!selectedText) return;
 
     lastSelectionRange = { start, end };
+};
+
+const preserveSelectionForChangeMenu = (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+
+    const onChangeButton = Boolean(target.closest('#decode-menu-btn'));
+    const onChangeMenu = Boolean(target.closest('#decode-submenu'));
+    if (!onChangeButton && !onChangeMenu) return;
+
+    captureEditorSelection();
+    event.preventDefault();
+
+    try {
+        editor.focus({ preventScroll: true });
+    } catch {
+        editor.focus();
+    }
 };
 
 const runSearch = () => {
@@ -719,7 +756,8 @@ const jumpToSearchMatch = (match) => {
     stateStore.setActiveTab(match.tabId);
     render();
 
-    if (stateStore.getActiveTab()?.mode === 'diff') return;
+    const activeMode = getNormalizedMode(stateStore.getActiveTab());
+    if (activeMode === 'diff' || activeMode === 'table') return;
 
     if (editorController.isFoldedViewActive()) {
         editorController.unfoldAll();
@@ -738,18 +776,30 @@ const jumpToSearchMatch = (match) => {
 
 const render = () => {
     const activeTab = stateStore.getActiveTab();
-    const mode = activeTab?.mode || 'markdown';
+    const mode = getNormalizedMode(activeTab);
     const isDiffMode = mode === 'diff';
+    const isTableMode = mode === 'table';
+    const isEditorMode = !isDiffMode && !isTableMode;
+    const wrapEnabled = isWrapEnabledForTab(activeTab);
 
     tabsView.render(stateStore.getTabs(), stateStore.getActiveTabId());
     editorShell.hidden = false;
     diffModeShell.hidden = false;
+    tableModeShell.hidden = false;
     tabContent.dataset.mode = mode;
-    editorShell.setAttribute('aria-hidden', String(isDiffMode));
+    tabContent.dataset.wrap = wrapEnabled ? 'on' : 'off';
+    editorShell.setAttribute('aria-hidden', String(isDiffMode || isTableMode));
     diffModeShell.setAttribute('aria-hidden', String(!isDiffMode));
+    tableModeShell.setAttribute('aria-hidden', String(!isTableMode));
+
+    if (lineNumbersManager) {
+        lineNumbersManager.setWrapEnabled(isEditorMode ? wrapEnabled : true);
+    }
 
     if (isDiffMode) {
         diffModeController.renderTab(activeTab);
+    } else if (isTableMode) {
+        tableModeController.renderTab(activeTab);
     } else {
         editorController.renderActiveTab();
     }
@@ -758,18 +808,26 @@ const render = () => {
         statusMode.value = mode;
     }
 
+    if (statusWrapToggle) {
+        statusWrapToggle.textContent = `Wrap: ${wrapEnabled ? 'On' : 'Off'}`;
+        statusWrapToggle.setAttribute('aria-pressed', String(wrapEnabled));
+        statusWrapToggle.disabled = !isEditorMode;
+    }
+
     if (isDiffMode) {
         statusPosition.textContent = 'Diff mode';
+    } else if (isTableMode) {
+        statusPosition.textContent = 'Table mode';
     } else {
         statusBarManager.scheduleUpdate();
     }
 
     refreshEditorDependentUiState({
-        refreshFind: !isDiffMode,
+        refreshFind: !isDiffMode && !isTableMode,
         refreshSearch: true
     });
 
-    if (isDiffMode) {
+    if (isDiffMode || isTableMode) {
         setFindWidgetOpen(false);
     } else if (findState.isOpen) {
         setFindWidgetOpen(true);
@@ -827,7 +885,7 @@ diffModeController = new DiffModeController({
     onLeftInput: (value) => stateStore.updateActiveTabDiffContent('left', value),
     onRightInput: (value) => stateStore.updateActiveTabDiffContent('right', value),
     onSummaryChange: (summary) => {
-        const mode = stateStore.getActiveTab()?.mode || 'markdown';
+        const mode = getNormalizedMode(stateStore.getActiveTab());
         if (mode !== 'diff') return;
 
         statusPosition.textContent = 'Diff mode';
@@ -836,11 +894,42 @@ diffModeController = new DiffModeController({
     }
 });
 
+tableModeController = new TableModeController({
+    shell: tableModeShell,
+    grid: tableGrid,
+    addRowButton: tableAddRowButton,
+    addColumnButton: tableAddColButton,
+    onTableChange: ({ tableData, content }) => {
+        stateStore.updateActiveTabTable(tableData, content);
+        refreshEditorDependentUiState({ refreshFind: true, refreshSearch: true });
+    },
+    onStatusChange: ({ row, col, rows, cols }) => {
+        const mode = getNormalizedMode(stateStore.getActiveTab());
+        if (mode !== 'table') return;
+        statusPosition.textContent = `Row ${row}, Col ${col}`;
+        statusLines.textContent = `Rows ${rows}`;
+        statusChars.textContent = `Cols ${cols}`;
+    }
+});
+
 refreshEditorDependentUiState();
 
 statusMode.addEventListener('change', () => {
-    stateStore.updateActiveTabMode(statusMode.value);
-    editorController.setMode(statusMode.value);
+    const mode = getNormalizedMode({ mode: statusMode.value });
+    stateStore.updateActiveTabMode(mode);
+    editorController.setMode(mode);
+    render();
+});
+
+statusWrapToggle.addEventListener('click', () => {
+    const activeTab = stateStore.getActiveTab();
+    if (!activeTab) return;
+
+    const mode = getNormalizedMode(activeTab);
+    if (mode === 'diff' || mode === 'table') return;
+
+    const nextWrap = !isWrapEnabledForTab(activeTab);
+    stateStore.updateActiveTabWrap(nextWrap);
     render();
 });
 
@@ -1029,14 +1118,8 @@ queryInput.addEventListener('keydown', (event) => {
 queryResult.addEventListener('scroll', syncQueryResultScroll);
 
 exportLocalStorageButton.addEventListener('click', () => {
-    const snapshot = {};
-    for (let i = 0; i < localStorage.length; i += 1) {
-        const key = localStorage.key(i);
-        if (!key) continue;
-        snapshot[key] = localStorage.getItem(key);
-    }
-
-    downloadBlobText(JSON.stringify(snapshot, null, 2), 'scratchpad-localstorage.json');
+    const snapshot = stateStore.exportStateSnapshot();
+    downloadBlobText(JSON.stringify(snapshot, null, 2), 'scratchpad-data.json');
     setFilesMenuOpen(false);
 });
 
@@ -1052,20 +1135,15 @@ importLocalStorageInput.addEventListener('change', async () => {
     try {
         const raw = await file.text();
         const parsed = JSON.parse(raw);
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-            throw new Error('Invalid localStorage format');
+        const imported = stateStore.importStateSnapshot(parsed);
+        if (!imported) {
+            throw new Error('Invalid data format');
         }
 
-        localStorage.clear();
-        Object.entries(parsed).forEach(([key, value]) => {
-            localStorage.setItem(key, String(value ?? ''));
-        });
-
-        stateStore.reloadFromStorage();
         render();
         setFilesMenuOpen(false);
     } catch {
-        window.alert('Could not import localstorage JSON file.');
+        window.alert('Could not import data JSON file.');
     }
 });
 
@@ -1073,10 +1151,15 @@ downloadTabButton.addEventListener('click', () => {
     const activeTab = stateStore.getActiveTab();
     if (!activeTab) return;
 
-    const ext = languageToExt[activeTab.mode] || 'txt';
+    const mode = getNormalizedMode(activeTab);
+
+    const ext = languageToExt[mode] || 'txt';
     const title = sanitizeFileName(activeTab.title);
-    const isDiffMode = activeTab.mode === 'diff';
-    const text = isDiffMode ? diffModeController.getExportText() : (activeTab.content || '');
+    const isDiffMode = mode === 'diff';
+    const isTableMode = mode === 'table';
+    const text = isDiffMode
+        ? diffModeController.getExportText()
+        : (isTableMode ? tableModeController.getExportText() : (activeTab.content || ''));
     const fileName = isDiffMode ? `${title}.${ext}` : `${title}.${ext}`;
     downloadBlobText(text, fileName);
     setFilesMenuOpen(false);
@@ -1096,6 +1179,29 @@ const applyDecodedSelection = (decoded) => {
     setDecodeMenuOpen(false);
 };
 
+const applyTextTransform = (transform) => {
+    if (typeof transform !== 'function') return;
+
+    const selection = editorController.getSelectionOffsets();
+    if (selection.start === selection.end && lastSelectionRange) {
+        editorController.setSelectionOffsets(lastSelectionRange.start, lastSelectionRange.end);
+    }
+
+    const selected = editorController.getSelectedText();
+    if (!selected) return;
+
+    const transformed = transform(selected);
+    if (typeof transformed !== 'string' || transformed === selected) {
+        setDecodeMenuOpen(false);
+        return;
+    }
+
+    editorController.replaceSelectionText(transformed);
+    lastSelectionRange = null;
+    refreshEditorDependentUiState();
+    setDecodeMenuOpen(false);
+};
+
 const registerDecodeAction = (button, candidateKey) => {
     button.addEventListener('click', () => {
         applyDecodedSelection(activeDecodeCandidates[candidateKey] || '');
@@ -1107,6 +1213,18 @@ registerDecodeAction(decodeEscapedButton, 'escaped');
 registerDecodeAction(decodeUnicodeButton, 'unicode');
 registerDecodeAction(decodeJwtPayloadButton, 'jwtPayload');
 registerDecodeAction(decodeJwtHeaderButton, 'jwtHeader');
+
+transformLowercaseButton.addEventListener('click', () => {
+    applyTextTransform((text) => text.toLowerCase());
+});
+
+transformUppercaseButton.addEventListener('click', () => {
+    applyTextTransform((text) => text.toUpperCase());
+});
+
+transformTitlecaseButton.addEventListener('click', () => {
+    applyTextTransform((text) => toTitleCase(text));
+});
 
 const applyJsonFormattingMode = (mode) => {
     const rawText = editorController.getContent();
@@ -1134,7 +1252,8 @@ formatJsonMinifiedButton.addEventListener('click', () => {
 });
 
 const refreshDecodeState = () => {
-    if ((stateStore.getActiveTab()?.mode || 'markdown') === 'diff') {
+    const mode = getNormalizedMode(stateStore.getActiveTab());
+    if (mode === 'diff' || mode === 'table') {
         refreshEditorDependentUiState({ refreshFind: false });
         return;
     }
@@ -1146,6 +1265,8 @@ const refreshDecodeState = () => {
 editor.addEventListener('select', refreshDecodeState);
 editor.addEventListener('keyup', refreshDecodeState);
 editor.addEventListener('mouseup', refreshDecodeState);
+
+document.addEventListener('mousedown', preserveSelectionForChangeMenu);
 
 document.addEventListener('click', (event) => {
     const target = event.target;
@@ -1209,9 +1330,7 @@ window.addEventListener('keydown', (event) => {
     }
 });
 
-window.addEventListener('storage', (event) => {
-    if (event.key !== 'scratchpad.tabs.v2') return;
-    stateStore.reloadFromStorage();
+stateStore.onExternalUpdate(() => {
     render();
 });
 
@@ -1224,8 +1343,14 @@ window.addEventListener('beforeunload', () => {
     stateStore.flushSave();
 });
 
-stateStore.saveImmediate();
-render();
+const initializeApp = async () => {
+    await stateStore.ready;
+    refreshEditorDependentUiState();
+    stateStore.saveImmediate();
+    render();
+};
+
+initializeApp();
 
 const hideAppLoader = () => {
     if (!appLoader) return;

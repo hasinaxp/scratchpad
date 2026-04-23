@@ -1,4 +1,11 @@
-const isCodeMode = (mode) => mode !== 'diff';
+const normalizeMode = (mode) => {
+    const raw = `${mode || 'text'}`.toLowerCase();
+    if (raw === 'markdown' || raw === 'python' || raw === 'java' || raw === 'yaml') return 'text';
+    if (raw === 'json' || raw === 'diff' || raw === 'table') return raw;
+    return 'text';
+};
+
+const isCodeMode = (mode) => normalizeMode(mode) !== 'diff';
 
 const normalize = (value) => `${value || ''}`.toLowerCase();
 
@@ -94,7 +101,8 @@ export const findTabMatches = (tabs, query, maxResults = 120) => {
     const matches = [];
 
     for (const tab of tabs) {
-        if (!isCodeMode(tab.mode)) continue;
+        const mode = normalizeMode(tab.mode);
+        if (!isCodeMode(mode)) continue;
 
         const content = `${tab.content || ''}`;
         if (!content) continue;
@@ -113,7 +121,7 @@ export const findTabMatches = (tabs, query, maxResults = 120) => {
                 matches.push({
                     tabId: tab.id,
                     tabTitle: tab.title,
-                    mode: tab.mode,
+                    mode,
                     lineNumber: i + 1,
                     offset: offset + matchStart,
                     length: Math.max(1, matchLength),

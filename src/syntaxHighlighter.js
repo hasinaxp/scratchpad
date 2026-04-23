@@ -166,14 +166,15 @@ const rulesByLanguage = {
     json: [...jsonRules, bracketRule]
 };
 
-export const highlightText = (text, language = 'markdown') => {
+export const highlightText = (text, language = 'text') => {
     const source = text || '';
     let html = '';
+    const normalizedLanguage = language === 'markdown' ? 'text' : language;
 
-    if (language === 'markdown') {
+    if (normalizedLanguage === 'text') {
         html = highlightMarkdown(source);
     } else {
-        const rules = rulesByLanguage[language] || rulesByLanguage.python;
+        const rules = rulesByLanguage[normalizedLanguage] || rulesByLanguage.python;
         html = applyRulesSafely(source, rules);
     }
 

@@ -17,9 +17,9 @@
                     <img class="sidebar-icon" src="assets/icon-files.svg" alt="" aria-hidden="true">
                     <span>Files</span>
                 </button>
-                <button id="decode-menu-btn" class="sidebar-item" type="button" aria-label="Decode selected text" aria-expanded="false">
+                <button id="decode-menu-btn" class="sidebar-item" type="button" aria-label="Change selected text" aria-expanded="false">
                     <img class="sidebar-icon" src="assets/icon-decode.svg" alt="" aria-hidden="true">
-                    <span>Decode</span>
+                    <span>Change</span>
                 </button>
                 <button id="search-menu-btn" class="sidebar-item" type="button" aria-label="Search" aria-expanded="false">
                     <img class="sidebar-icon" src="assets/icon-query.svg" alt="" aria-hidden="true">
@@ -34,11 +34,14 @@
                     <span>Query</span>
                 </button>
                 <div id="files-submenu" class="sidebar-submenu" role="menu" aria-label="Files actions" hidden>
-                    <button id="export-localstorage-btn" class="submenu-item" type="button" role="menuitem">Export localstorage</button>
-                    <button id="import-localstorage-btn" class="submenu-item" type="button" role="menuitem">Import localstorage</button>
+                    <button id="export-localstorage-btn" class="submenu-item" type="button" role="menuitem">Export data</button>
+                    <button id="import-localstorage-btn" class="submenu-item" type="button" role="menuitem">Import data</button>
                     <button id="download-tab-btn" class="submenu-item" type="button" role="menuitem">Download tab content</button>
                 </div>
-                <div id="decode-submenu" class="sidebar-submenu" role="menu" aria-label="Decode actions" hidden>
+                <div id="decode-submenu" class="sidebar-submenu" role="menu" aria-label="Change actions" hidden>
+                    <button id="transform-lowercase-btn" class="submenu-item" type="button" role="menuitem">To lower case</button>
+                    <button id="transform-uppercase-btn" class="submenu-item" type="button" role="menuitem">To UPPER CASE</button>
+                    <button id="transform-titlecase-btn" class="submenu-item" type="button" role="menuitem">To Title Case</button>
                     <button id="decode-escaped-btn" class="submenu-item" type="button" role="menuitem">Unescape escaped string</button>
                     <button id="decode-url-btn" class="submenu-item" type="button" role="menuitem">From URL encoded</button>
                     <button id="decode-unicode-btn" class="submenu-item" type="button" role="menuitem">From Unicode escape</button>
@@ -60,7 +63,7 @@
                 <div class="tab-headers" role="tablist" aria-label="Editor tabs">
                     <div class="tab-add" id="add-tab" role="button" aria-label="Add tab" tabindex="0">+</div>
                 </div>
-                <div class="tab-content" data-mode="markdown">
+                <div class="tab-content" data-mode="text">
                     <section id="find-widget" class="find-widget" aria-label="Find and replace" hidden>
                         <div class="find-row">
                             <button id="find-toggle-replace" class="find-icon-btn" type="button" aria-label="Toggle replace" aria-expanded="true">v</button>
@@ -114,18 +117,24 @@
                             <div id="diff-output" class="diff-output"></div>
                         </section>
                     </div>
+                    <div id="table-mode-shell" class="table-mode-shell" aria-label="Table mode">
+                        <div class="table-toolbar">
+                            <button id="table-add-row" class="table-action" type="button">+ Row</button>
+                            <button id="table-add-col" class="table-action" type="button">+ Column</button>
+                        </div>
+                        <div id="table-grid" class="table-grid" role="grid" aria-label="Spreadsheet table"></div>
+                    </div>
                     <div class="status-bar" aria-live="polite">
                         <span id="status-position" class="status-item">Ln 1, Col 1</span>
                         <span id="status-lines" class="status-item">Lines 1</span>
                         <span id="status-chars" class="status-item">Chars 0</span>
+                        <button id="status-wrap-toggle" class="status-wrap-toggle" type="button" aria-pressed="true">Wrap: On</button>
                         <label class="status-language-wrap" for="status-mode">Mode</label>
                         <select id="status-mode" class="status-language" aria-label="Editor mode">
-                            <option value="markdown" selected>Markdown</option>
+                            <option value="text" selected>Text</option>
                             <option value="json">JSON</option>
                             <option value="diff">Diff</option>
-                            <option value="yaml">YAML</option>
-                            <option value="python">Python</option>
-                            <option value="java">Java</option>
+                            <option value="table">Table</option>
                         </select>
                     </div>
                 </div>
