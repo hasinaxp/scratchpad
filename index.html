@@ -1,10 +1,59 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
     <head>
-        <title>scratchpad</title>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>scratchpad – offline notepad, JSON formatter, diff &amp; spreadsheet in your browser</title>
+        <meta name="description" content="Free offline scratchpad in your browser: notes, JSON formatter and query tool, text diff, JWT/URL decoders and a spreadsheet with formulas. No sign-up needed.">
+        <meta name="keywords" content="scratchpad, online notepad, offline notepad, JSON formatter, JSON viewer, JSON query, text diff, JWT decoder, URL decoder, unescape JSON, spreadsheet, CSV export, browser editor">
+        <meta name="author" content="hasinaxp">
+        <meta name="robots" content="index, follow">
+        <meta name="theme-color" content="#111111">
+        <link rel="canonical" href="https://hasinaxp.github.io/scratchpad/">
+
+        <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+        <link rel="icon" href="assets/icon-32.png" type="image/png" sizes="32x32">
+        <link rel="apple-touch-icon" href="assets/icon-180.png">
+        <link rel="manifest" href="site.webmanifest">
+
+        <meta property="og:type" content="website">
+        <meta property="og:site_name" content="scratchpad">
+        <meta property="og:title" content="scratchpad – offline notepad, JSON tools &amp; spreadsheet in your browser">
+        <meta property="og:description" content="Notes, JSON formatting and queries, text diff, decoders and a spreadsheet with formulas. Runs entirely in your browser.">
+        <meta property="og:url" content="https://hasinaxp.github.io/scratchpad/">
+        <meta property="og:image" content="https://hasinaxp.github.io/scratchpad/assets/og-image.png">
+        <meta property="og:image:width" content="1200">
+        <meta property="og:image:height" content="630">
+        <meta property="og:image:alt" content="scratchpad table mode with formulas and totals">
+        <meta name="twitter:card" content="summary_large_image">
+        <meta name="twitter:title" content="scratchpad – offline notepad, JSON tools &amp; spreadsheet">
+        <meta name="twitter:description" content="Notes, JSON formatting and queries, text diff, decoders and a spreadsheet. Runs entirely in your browser.">
+        <meta name="twitter:image" content="https://hasinaxp.github.io/scratchpad/assets/og-image.png">
+
+        <script type="application/ld+json">
+        {
+            "@context": "https://schema.org",
+            "@type": "WebApplication",
+            "name": "scratchpad",
+            "url": "https://hasinaxp.github.io/scratchpad/",
+            "description": "Browser-only scratchpad with notes, JSON formatter and query tool, text diff, decoders and a spreadsheet with formulas and CSV export.",
+            "applicationCategory": "DeveloperApplication",
+            "operatingSystem": "Any (web browser)",
+            "browserRequirements": "Requires JavaScript",
+            "image": "https://hasinaxp.github.io/scratchpad/assets/og-image.png",
+            "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+            "author": { "@type": "Person", "name": "hasinaxp", "url": "https://github.com/hasinaxp" },
+            "codeRepository": "https://github.com/hasinaxp/scratchpad"
+        }
+        </script>
+
         <link rel="stylesheet" href="style.css">
     </head>
     <body>
+        <h1 class="sr-only">scratchpad: offline notepad, JSON formatter, text diff and spreadsheet in your browser</h1>
+        <noscript>
+            <p>scratchpad is a browser-only editor for notes, code snippets and JSON. It formats and queries JSON, diffs text, decodes URL/JWT/Unicode strings and includes a spreadsheet with formulas and CSV export. Please enable JavaScript to use it.</p>
+        </noscript>
         <div id="app-loader" class="app-loader" role="status" aria-live="polite" aria-label="Loading application">
             <div class="app-loader-inner">
                 <div class="app-loader-spinner" aria-hidden="true"></div>

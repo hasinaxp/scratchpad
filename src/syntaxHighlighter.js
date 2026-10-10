@@ -190,6 +190,16 @@ const jsonRules = [
     [/(\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)/g, 'number']
 ];
 
+// Escaped JSON strings: \"...\" where an inner escape is \\ followed by one escaped token.
+const ESCAPED_JSON_STRING = String.raw`\\"(?:[^\\"]|\\[^\\"]|\\\\(?:\\.|[^\\]))*\\"`;
+const escapedJsonRules = [
+    [new RegExp(`(${ESCAPED_JSON_STRING}\\s*:)`, 'g'), 'keyword'],
+    [new RegExp(`(${ESCAPED_JSON_STRING})`, 'g'), 'string'],
+    ...jsonRules
+];
+// Only documents that contain escaped objects/arrays use them, so normal "say \"hi\"" strings stay intact.
+const looksEscapedJson = (source) => /[{[]\s*\\"/.test(source);
+
 const cRules = [
     [/(\/\*[\s\S]*?\*\/|\/\/.*$)/gm, 'comment'],
     [/(^[ \t]*#[ \t]*[a-z]+.*$)/gm, 'meta'],
@@ -216,7 +226,9 @@ export const highlightText = (text, language = 'text') => {
     if (normalizedLanguage === 'text') {
         html = highlightMarkdown(source);
     } else {
-        const rules = rulesByLanguage[normalizedLanguage] || rulesByLanguage.python;
+        const rules = normalizedLanguage === 'json' && looksEscapedJson(source)
+            ? [...escapedJsonRules, bracketRule]
+            : (rulesByLanguage[normalizedLanguage] || rulesByLanguage.python);
         html = applyRulesSafely(source, rules);
     }
 

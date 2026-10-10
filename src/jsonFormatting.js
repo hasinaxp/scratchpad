@@ -51,6 +51,63 @@ const findBalancedJsonEnd = (text, startIndex) => {
     return -1;
 };
 
+// Escaped JSON (e.g. {\"name\": \"remi\"} copied from logs) is real JSON one string-escape layer down:
+// \" acts as a quote and \\X as an escape inside a string.
+const findEscapedJsonEnd = (text, startIndex) => {
+    const opening = text[startIndex];
+    const closing = opening === '{' ? '}' : ']';
+
+    let depth = 0;
+    let inString = false;
+
+    for (let i = startIndex; i < text.length; i += 1) {
+        const ch = text[i];
+
+        if (ch === '\\') {
+            const next = text[i + 1];
+            i += 1;
+            if (next === '"') {
+                inString = !inString;
+            } else if (next === '\\' && inString) {
+                // The escaped character is itself one token: \" or \\ (two chars) or a plain char.
+                i += text[i + 1] === '\\' ? 2 : 1;
+            }
+            continue;
+        }
+
+        // A bare quote cannot appear in escaped JSON.
+        if (ch === '"') return -1;
+        if (inString) continue;
+
+        if (ch === opening) {
+            depth += 1;
+        } else if (ch === closing) {
+            depth -= 1;
+            if (depth === 0) return i;
+        }
+    }
+
+    return -1;
+};
+
+const unescapeJsonLayer = (raw) => {
+    try {
+        const decoded = JSON.parse(`"${raw}"`);
+        return typeof decoded === 'string' ? decoded : null;
+    } catch {
+        return null;
+    }
+};
+
+const isValidJson = (text) => {
+    try {
+        JSON.parse(text);
+        return true;
+    } catch {
+        return false;
+    }
+};
+
 const formatChunk = (chunk, mode) => {
     try {
         const parsed = JSON.parse(chunk);
@@ -80,19 +137,28 @@ export const extractJsonChunks = (content) => {
             continue;
         }
 
-        const endIndex = findBalancedJsonEnd(content, i);
-        if (endIndex === -1) {
+        let endIndex = findBalancedJsonEnd(content, i);
+        let json = endIndex === -1 ? null : content.slice(i, endIndex + 1);
+        let escaped = false;
+
+        if (json === null || !isValidJson(json)) {
+            json = null;
+            const escapedEnd = findEscapedJsonEnd(content, i);
+            const decoded = escapedEnd === -1 ? null : unescapeJsonLayer(content.slice(i, escapedEnd + 1));
+            if (decoded !== null && isValidJson(decoded)) {
+                endIndex = escapedEnd;
+                json = decoded;
+                escaped = true;
+            }
+        }
+
+        if (json === null) {
             i += 1;
             continue;
         }
 
-        const candidate = content.slice(i, endIndex + 1);
-        if (formatChunk(candidate, 'minified') === null) {
-            i += 1;
-            continue;
-        }
-
-        chunks.push({ start: i, end: endIndex + 1, text: candidate });
+        // `text` is the raw source span; `json` is parseable JSON (unescaped for escaped chunks).
+        chunks.push({ start: i, end: endIndex + 1, text: content.slice(i, endIndex + 1), json, escaped });
         i = endIndex + 1;
     }
 
@@ -126,7 +192,8 @@ export const formatJsonContent = (content, mode) => {
         const chunk = chunks[i];
         output += content.slice(cursor, chunk.start);
 
-        const formatted = formatChunk(chunk.text, targetMode);
+        // Escaped chunks come out as real JSON, so formatting also unescapes them.
+        const formatted = formatChunk(chunk.json, targetMode);
         if (!formatted) {
             output += chunk.text;
         } else {

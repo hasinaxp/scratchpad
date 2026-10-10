@@ -564,7 +564,7 @@ const runQueryOnJsonChunks = (queryText, rawText) => {
 
     for (let i = 0; i < chunks.length; i += 1) {
         const chunk = chunks[i];
-        const parsed = JSON.parse(chunk.text);
+        const parsed = JSON.parse(chunk.json);
         const result = executeJpl(queryText, parsed, JPL_LIMITS);
         if (result.ok) {
             okCount += 1;
