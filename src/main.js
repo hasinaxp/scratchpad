@@ -40,14 +40,15 @@ const diffLeftLineNumbers = byId('diff-left-line-numbers');
 const diffRightLineNumbers = byId('diff-right-line-numbers');
 const diffOutput = byId('diff-output');
 const tableGrid = byId('table-grid');
-const tableAddRowButton = byId('table-add-row');
-const tableAddColButton = byId('table-add-col');
 const filesMenuButton = byId('files-menu-btn');
 const decodeMenuButton = byId('decode-menu-btn');
 const searchMenuButton = byId('search-menu-btn');
 const formatJsonButton = byId('format-json-btn');
 const queryButton = byId('query-btn');
 const filesSubmenu = byId('files-submenu');
+const savedTabsList = byId('saved-tabs-list');
+const closeTabDialog = byId('close-tab-dialog');
+const closeTabMessage = byId('close-tab-message');
 const decodeSubmenu = byId('decode-submenu');
 const searchSubmenu = byId('search-submenu');
 const searchOpenButton = byId('search-open-btn');
@@ -73,6 +74,7 @@ const searchPanelClose = byId('search-panel-close');
 const searchInput = byId('search-input');
 const searchResultMeta = byId('search-result-meta');
 const searchResults = byId('search-results');
+const searchCurrentTab = byId('search-current-tab');
 const queryPanelClose = byId('query-panel-close');
 const queryInput = byId('query-input');
 const queryRunButton = byId('query-run');
@@ -632,7 +634,68 @@ const runQuery = () => {
     setQueryResultText(`${prettyPrint(output.value)}\n`);
 };
 
+let resolveCloseChoice = null;
+
+const finishCloseChoice = (choice) => {
+    const resolve = resolveCloseChoice;
+    resolveCloseChoice = null;
+    if (closeTabDialog.open) closeTabDialog.close();
+    resolve?.(choice);
+};
+
+closeTabDialog.addEventListener('click', (event) => {
+    const button = event.target instanceof Element ? event.target.closest('button[value]') : null;
+    if (button) finishCloseChoice(button.value);
+});
+
+// Esc closes the dialog natively; a late close event from an earlier prompt must not answer a newer one.
+closeTabDialog.addEventListener('close', () => {
+    if (!closeTabDialog.open) finishCloseChoice('');
+});
+
+// Resolves to 'save', 'discard', 'cancel' or '' (Esc).
+const askCloseTab = (tab) => new Promise((resolve) => {
+    closeTabMessage.textContent = `Save "${tab.title}" before closing? Saved tabs can be reopened from Files.`;
+    resolveCloseChoice = resolve;
+    closeTabDialog.showModal();
+});
+
+const requestCloseTab = async (tabId) => {
+    if (closeTabDialog.open) return;
+    const tab = stateStore.getTabs().find((item) => item.id === tabId);
+    if (!tab) return;
+
+    // Empty tabs have nothing worth saving, so they close without asking.
+    if (stateStore.isTabEmpty(tabId)) {
+        stateStore.closeTab(tabId);
+    } else {
+        const choice = await askCloseTab(tab);
+        if (choice !== 'save' && choice !== 'discard') return;
+        stateStore.closeTab(tabId, { save: choice === 'save' });
+    }
+    render();
+};
+
+const renderSavedTabs = () => {
+    const saved = stateStore.getSavedTabs();
+    if (!saved.length) {
+        savedTabsList.innerHTML = '<div class="saved-tabs-empty">No saved tabs yet</div>';
+        return;
+    }
+
+    savedTabsList.innerHTML = saved.map((tab) => {
+        const when = new Date(tab.savedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const title = escapeHtml(tab.title);
+        return `<div class="saved-tab-row">`
+            + `<button class="submenu-item saved-tab-open" type="button" role="menuitem" data-saved-id="${tab.id}" title="Reopen ${title}">`
+            + `<span class="saved-tab-title">${title}</span><span class="saved-tab-meta">${tab.mode} · ${when}</span></button>`
+            + `<button class="saved-tab-delete" type="button" data-saved-delete="${tab.id}" aria-label="Delete saved tab ${title}" title="Delete">×</button>`
+            + '</div>';
+    }).join('');
+};
+
 const setFilesMenuOpen = (open) => {
+    if (open) renderSavedTabs();
     filesSubmenu.hidden = !open;
     filesMenuButton.setAttribute('aria-expanded', String(open));
 };
@@ -733,7 +796,8 @@ const runSearch = () => {
         return;
     }
 
-    currentSearchMatches = findTabMatches(stateStore.getTabs(), query, 150);
+    const searchTabs = searchCurrentTab.checked ? [stateStore.getActiveTab()].filter(Boolean) : stateStore.getTabs();
+    currentSearchMatches = findTabMatches(searchTabs, query, 150);
 
     if (currentSearchMatches.length === 0) {
         searchResultMeta.textContent = 'No matches';
@@ -817,7 +881,7 @@ const render = () => {
     if (isDiffMode) {
         statusPosition.textContent = 'Diff mode';
     } else if (isTableMode) {
-        statusPosition.textContent = 'Table mode';
+        tableModeController.emitStatus();
     } else {
         statusBarManager.scheduleUpdate();
     }
@@ -855,8 +919,7 @@ tabsView = new TabsView({
         render();
     },
     onClose: (tabId) => {
-        stateStore.closeTab(tabId);
-        render();
+        requestCloseTab(tabId);
     }
 });
 
@@ -897,17 +960,19 @@ diffModeController = new DiffModeController({
 tableModeController = new TableModeController({
     shell: tableModeShell,
     grid: tableGrid,
-    addRowButton: tableAddRowButton,
-    addColumnButton: tableAddColButton,
     onTableChange: ({ tableData, content }) => {
         stateStore.updateActiveTabTable(tableData, content);
         refreshEditorDependentUiState({ refreshFind: true, refreshSearch: true });
     },
-    onStatusChange: ({ row, col, rows, cols }) => {
+    onExportCsv: (text, rangeLabel) => {
+        const title = sanitizeFileName(stateStore.getActiveTab()?.title);
+        downloadBlobText(text, `${title}-${rangeLabel}.csv`);
+    },
+    onStatusChange: ({ position, summary, rows, cols }) => {
         const mode = getNormalizedMode(stateStore.getActiveTab());
         if (mode !== 'table') return;
-        statusPosition.textContent = `Row ${row}, Col ${col}`;
-        statusLines.textContent = `Rows ${rows}`;
+        statusPosition.textContent = position;
+        statusLines.textContent = summary || `Rows ${rows}`;
         statusChars.textContent = `Cols ${cols}`;
     }
 });
@@ -953,6 +1018,26 @@ decodeMenuButton.addEventListener('click', () => {
     setDecodeMenuOpen(!isOpen);
 });
 
+savedTabsList.addEventListener('click', (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const deleteButton = target?.closest('[data-saved-delete]');
+    if (deleteButton) {
+        // The list re-renders, so keep the outside-click handler from seeing a detached target.
+        event.stopPropagation();
+        const tab = stateStore.getSavedTabs().find((item) => item.id === deleteButton.dataset.savedDelete);
+        if (!tab || !window.confirm(`Delete saved tab "${tab.title}"? This cannot be undone.`)) return;
+        stateStore.deleteSavedTab(tab.id);
+        renderSavedTabs();
+        return;
+    }
+
+    const openButton = target?.closest('[data-saved-id]');
+    if (!openButton) return;
+    stateStore.reopenSavedTab(openButton.dataset.savedId);
+    setFilesMenuOpen(false);
+    render();
+});
+
 searchMenuButton.addEventListener('click', () => {
     const isOpen = searchMenuButton.getAttribute('aria-expanded') === 'true';
     if (!isOpen) {
@@ -961,12 +1046,14 @@ searchMenuButton.addEventListener('click', () => {
     setSearchMenuOpen(!isOpen);
 });
 
-searchOpenButton.addEventListener('click', () => {
+const openSearchPanel = () => {
     setSearchMenuOpen(false);
     closeTransientUi({ keepSearchPanel: true });
     setSearchPanelOpen(true);
     runSearch();
-});
+};
+
+searchOpenButton.addEventListener('click', openSearchPanel);
 
 findReplaceOpenButton.addEventListener('click', () => {
     setSearchMenuOpen(false);
@@ -978,6 +1065,10 @@ searchPanelClose.addEventListener('click', () => {
 });
 
 searchInput.addEventListener('input', () => {
+    runSearch();
+});
+
+searchCurrentTab.addEventListener('change', () => {
     runSearch();
 });
 
@@ -1292,6 +1383,12 @@ window.addEventListener('keydown', (event) => {
         return;
     }
 
+    if (event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === 's') {
+        event.preventDefault();
+        openSearchPanel();
+        return;
+    }
+
     if (event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === 'h') {
         event.preventDefault();
         openFindWidget(true);
@@ -1325,8 +1422,7 @@ window.addEventListener('keydown', (event) => {
         const activeTab = stateStore.getActiveTab();
         if (!activeTab) return;
 
-        stateStore.closeTab(activeTab.id);
-        render();
+        requestCloseTab(activeTab.id);
     }
 });
 
@@ -1338,6 +1434,11 @@ window.addEventListener('resize', () => {
     lineNumbersManager.scheduleRenderViewport();
     statusBarManager.scheduleUpdate();
 });
+
+const setCtrlHeld = (held) => document.body.classList.toggle('ctrl-held', held);
+window.addEventListener('keydown', (event) => setCtrlHeld(event.ctrlKey || event.metaKey));
+window.addEventListener('keyup', (event) => setCtrlHeld(event.ctrlKey || event.metaKey));
+window.addEventListener('blur', () => setCtrlHeld(false));
 
 window.addEventListener('beforeunload', () => {
     stateStore.flushSave();

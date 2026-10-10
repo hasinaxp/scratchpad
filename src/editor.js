@@ -1022,6 +1022,8 @@ export class EditorController {
     }
 
     syncHighlightScroll() {
+        // Match the textarea's content box (scrollbar excluded) so wrapped lines break at the same column.
+        this.highlightLayer.style.width = `${this.editor.clientWidth}px`;
         this.highlightLayer.style.transform = `translate(${-this.editor.scrollLeft}px, ${-this.editor.scrollTop}px)`;
     }
 
@@ -1034,6 +1036,8 @@ export class EditorController {
         this.editor.addEventListener('input', () => {
             this.syncModelFromEditor();
         });
+
+        new ResizeObserver(() => this.syncHighlightScroll()).observe(this.editor);
 
         this.editor.addEventListener('scroll', () => {
             this.stateStore.updateActiveTabScroll(this.editor.scrollTop);

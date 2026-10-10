@@ -37,6 +37,9 @@
                     <button id="export-localstorage-btn" class="submenu-item" type="button" role="menuitem">Export data</button>
                     <button id="import-localstorage-btn" class="submenu-item" type="button" role="menuitem">Import data</button>
                     <button id="download-tab-btn" class="submenu-item" type="button" role="menuitem">Download tab content</button>
+                    <div class="submenu-divider" role="separator"></div>
+                    <div class="submenu-label">Saved tabs</div>
+                    <div id="saved-tabs-list" class="saved-tabs-list"></div>
                 </div>
                 <div id="decode-submenu" class="sidebar-submenu" role="menu" aria-label="Change actions" hidden>
                     <button id="transform-lowercase-btn" class="submenu-item" type="button" role="menuitem">To lower case</button>
@@ -119,10 +122,34 @@
                     </div>
                     <div id="table-mode-shell" class="table-mode-shell" aria-label="Table mode">
                         <div class="table-toolbar">
-                            <button id="table-add-row" class="table-action" type="button">+ Row</button>
-                            <button id="table-add-col" class="table-action" type="button">+ Column</button>
+                            <span id="table-cell-name" class="table-cell-name" aria-live="polite">A1</span>
+                            <span class="table-fx" aria-hidden="true">fx</span>
+                            <input id="table-formula" class="table-formula" type="text" spellcheck="false" autocomplete="off" aria-label="Cell value or formula" placeholder="Value or formula, e.g. =SUM(A1:A5)">
+                            <span class="table-tool-sep" aria-hidden="true"></span>
+                            <button class="table-tool" type="button" data-table-action="undo" title="Undo (Ctrl+Z)" aria-label="Undo">&#8630;</button>
+                            <button class="table-tool" type="button" data-table-action="redo" title="Redo (Ctrl+Y)" aria-label="Redo">&#8631;</button>
+                            <span class="table-tool-sep" aria-hidden="true"></span>
+                            <button class="table-tool" type="button" data-table-action="insertRowBelow" title="Insert row below">+ Row</button>
+                            <button class="table-tool" type="button" data-table-action="insertColRight" title="Insert column right">+ Col</button>
+                            <button class="table-tool" type="button" data-table-action="sortAsc" title="Sort by active column, A to Z (select rows first to sort only those)">A&#8594;Z</button>
+                            <button class="table-tool" type="button" data-table-action="sortDesc" title="Sort by active column, Z to A (select rows first to sort only those)">Z&#8594;A</button>
+                            <span class="table-tool-sep" aria-hidden="true"></span>
+                            <button class="table-tool" type="button" data-table-action="exportCsv" title="Export a range as CSV (Ctrl+E)" aria-haspopup="dialog">&#8615; CSV</button>
+                            <div id="table-export" class="table-export" role="dialog" aria-label="Export CSV" hidden>
+                                <div class="table-export-title">Export range as CSV</div>
+                                <div class="table-export-range">
+                                    <input id="table-export-from" class="table-export-input" type="text" spellcheck="false" autocomplete="off" aria-label="First corner cell" placeholder="A1">
+                                    <span aria-hidden="true">:</span>
+                                    <input id="table-export-to" class="table-export-input" type="text" spellcheck="false" autocomplete="off" aria-label="Opposite corner cell" placeholder="D20">
+                                </div>
+                                <div id="table-export-hint" class="table-export-hint" aria-live="polite"></div>
+                                <div class="table-export-actions">
+                                    <button id="table-export-selection" class="table-tool" type="button">Use selection</button>
+                                    <button id="table-export-go" class="table-export-go" type="button">Download</button>
+                                </div>
+                            </div>
                         </div>
-                        <div id="table-grid" class="table-grid" role="grid" aria-label="Spreadsheet table"></div>
+                        <div id="table-grid" class="table-grid" role="grid" aria-label="Spreadsheet table. Right-click for more actions." tabindex="0"></div>
                     </div>
                     <div class="status-bar" aria-live="polite">
                         <span id="status-position" class="status-item">Ln 1, Col 1</span>
@@ -210,10 +237,21 @@ For mixed logs/SSE text, JPL runs per detected JSON chunk.</pre>
                 </div>
                 <label for="search-input" class="query-label">Fuzzy query</label>
                 <input id="search-input" class="search-input" type="text" placeholder="Search across all code tabs..." autocomplete="off">
+                <label class="search-scope"><input id="search-current-tab" type="checkbox"> Current tab only</label>
                 <div id="search-result-meta" class="query-result-meta">Ready</div>
                 <div id="search-results" class="search-results" role="list" aria-label="Search matches"></div>
             </aside>
         </div>
+
+        <dialog id="close-tab-dialog" class="app-dialog" aria-labelledby="close-tab-title">
+            <div id="close-tab-title" class="app-dialog-title">Close tab</div>
+            <p id="close-tab-message" class="app-dialog-text"></p>
+            <div class="app-dialog-actions">
+                <button class="app-dialog-btn" type="button" value="cancel">Cancel</button>
+                <button class="app-dialog-btn" type="button" value="discard">Don't save</button>
+                <button class="app-dialog-btn is-primary" type="button" value="save" autofocus>Save &amp; close</button>
+            </div>
+        </dialog>
 
         <script type="module" src="src/main.js"></script>
     </body>

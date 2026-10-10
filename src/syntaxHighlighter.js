@@ -7,6 +7,15 @@ const cloneRegexGlobal = (regex) => {
 
 const wrap = (className, text) => `<span class="tok-${className}">${text}</span>`;
 
+// Excludes quotes/brackets so the URL is safe inside href="" and trailing punctuation is dropped.
+const URL_PATTERN_CAPTURE = /(https?:\/\/[^\s"'<>`]*[^\s"'<>`.,;:!?)\]}])/;
+
+// Escapes text and wraps URLs in anchors; anchors are inline so the overlay layout stays identical.
+const escapeWithLinks = (text) => `${text || ''}`.split(URL_PATTERN_CAPTURE).map((part, index) => {
+    const escaped = escapeHtml(part);
+    return index % 2 ? `<a class="tok-url" href="${escaped}" target="_blank" rel="noopener noreferrer">${escaped}</a>` : escaped;
+}).join('');
+
 const applyRulesSafely = (text, rules) => {
     let segments = [{ text, className: null }];
 
@@ -58,7 +67,7 @@ const applyRulesSafely = (text, rules) => {
     }
 
     return segments.map((segment) => {
-        const escaped = escapeHtml(segment.text);
+        const escaped = escapeWithLinks(segment.text);
         if (!segment.className) return escaped;
         return `<span class="tok-${segment.className}">${escaped}</span>`;
     }).join('');
@@ -75,38 +84,61 @@ const applyInlineMarkdown = (line) => {
     return applyRulesSafely(line, rules);
 };
 
+const FENCE_LANGUAGE_ALIASES = {
+    py: 'python',
+    python: 'python',
+    java: 'java',
+    yml: 'yaml',
+    yaml: 'yaml',
+    json: 'json',
+    c: 'c',
+    h: 'c',
+    cpp: 'c',
+    'c++': 'c'
+};
+
+// Fenced blocks tagged with a known language get that language's rules; others stay plain code.
+const highlightFence = (lines, tag) => {
+    const rules = rulesByLanguage[FENCE_LANGUAGE_ALIASES[tag]];
+    if (!rules) return lines.map((line) => wrap('code', escapeWithLinks(line))).join('\n');
+    return applyRulesSafely(lines.join('\n'), rules);
+};
+
 const highlightMarkdown = (text) => {
     const lines = text.split('\n');
-    let inFence = false;
-    let fenceMarker = '';
+    let fence = null;
     const out = [];
+    const closeFence = () => {
+        if (fence.lines.length) out.push(highlightFence(fence.lines, fence.tag));
+        fence = null;
+    };
 
     for (const line of lines) {
         const trimmed = line.trim();
 
-        if (!inFence && (trimmed.startsWith('```') || trimmed.startsWith('~~~'))) {
-            inFence = true;
-            fenceMarker = trimmed.startsWith('```') ? '```' : '~~~';
-            out.push(wrap('code', escapeHtml(line)));
+        if (!fence && (trimmed.startsWith('```') || trimmed.startsWith('~~~'))) {
+            fence = { marker: trimmed.slice(0, 3), tag: trimmed.slice(3).trim().split(/\s+/)[0].toLowerCase(), lines: [] };
+            out.push(wrap('code', escapeWithLinks(line)));
             continue;
         }
 
-        if (inFence) {
-            out.push(wrap('code', escapeHtml(line)));
-            if (trimmed.startsWith(fenceMarker)) {
-                inFence = false;
-                fenceMarker = '';
+        if (fence) {
+            if (trimmed.startsWith(fence.marker)) {
+                closeFence();
+                out.push(wrap('code', escapeWithLinks(line)));
+            } else {
+                fence.lines.push(line);
             }
             continue;
         }
 
         if (/^\s*#{1,6}\s/.test(line)) {
-            out.push(wrap('title', escapeHtml(line)));
+            out.push(wrap('title', escapeWithLinks(line)));
             continue;
         }
 
         if (/^\s*>/.test(line)) {
-            out.push(wrap('comment', escapeHtml(line)));
+            out.push(wrap('comment', escapeWithLinks(line)));
             continue;
         }
 
@@ -116,13 +148,14 @@ const highlightMarkdown = (text) => {
         }
 
         if (/^\s*(?:---|\*\*\*|___)\s*$/.test(line)) {
-            out.push(wrap('keyword', escapeHtml(line)));
+            out.push(wrap('keyword', escapeWithLinks(line)));
             continue;
         }
 
         out.push(applyInlineMarkdown(line));
     }
 
+    if (fence) closeFence();
     return out.join('\n');
 };
 
@@ -157,12 +190,21 @@ const jsonRules = [
     [/(\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)/g, 'number']
 ];
 
-const bracketRule = [/[(){}\[\]]/g, 'bracket'];
+const cRules = [
+    [/(\/\*[\s\S]*?\*\/|\/\/.*$)/gm, 'comment'],
+    [/(^[ \t]*#[ \t]*[a-z]+.*$)/gm, 'meta'],
+    [/("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')/g, 'string'],
+    [/(\b(?:auto|bool|break|case|char|const|continue|default|do|double|else|enum|extern|false|float|for|goto|if|inline|int|long|NULL|register|return|short|signed|sizeof|static|struct|switch|true|typedef|union|unsigned|void|volatile|while)\b)/g, 'keyword'],
+    [/(\b0[xX][0-9a-fA-F]+\b|\b\d+(?:\.\d+)?[uUlLfF]*\b)/g, 'number']
+];
+
+const bracketRule =[/[(){}\[\]]/g, 'bracket'];
 
 const rulesByLanguage = {
     python: [...pythonRules, bracketRule],
     java: [...javaRules, bracketRule],
     yaml: [...yamlRules, bracketRule],
+    c: [...cRules, bracketRule],
     json: [...jsonRules, bracketRule]
 };
 

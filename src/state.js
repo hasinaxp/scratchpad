@@ -27,6 +27,7 @@ const createDefaultTable = () => ({
 
 const createEmptyState = () => ({
     tabs: [],
+    savedTabs: [],
     activeTabId: null,
     nextTabNumber: 1
 });
@@ -186,30 +187,37 @@ const migrateLegacyState = () => {
     return buildFromLegacyStorageMap(legacyMap);
 };
 
+const normalizeTab = (tab, index) => ({
+    id: typeof tab?.id === 'string' && tab.id.length > 0 ? tab.id : createTabId(),
+    title: deriveTabTitle(tab?.content || '', index + 1),
+    content: typeof tab?.content === 'string' ? tab.content : '',
+    wrap: typeof tab?.wrap === 'boolean' ? tab.wrap : true,
+    scrollTop: typeof tab?.scrollTop === 'number' ? tab.scrollTop : 0,
+    mode: normalizeMode(typeof tab?.mode === 'string'
+        ? tab.mode
+        : tab?.language),
+    diff: {
+        left: typeof tab?.diff?.left === 'string' ? tab.diff.left : '',
+        right: typeof tab?.diff?.right === 'string' ? tab.diff.right : ''
+    },
+    table: {
+        rows: Number.isInteger(tab?.table?.rows) ? tab.table.rows : createDefaultTable().rows,
+        cols: Number.isInteger(tab?.table?.cols) ? tab.table.cols : createDefaultTable().cols,
+        cells: Array.isArray(tab?.table?.cells) ? tab.table.cells : createDefaultTable().cells,
+        widths: Array.isArray(tab?.table?.widths) ? tab.table.widths : []
+    }
+});
+
 const normalizeState = (candidate) => {
     if (!candidate || !Array.isArray(candidate.tabs) || typeof candidate.nextTabNumber !== 'number') {
         return null;
     }
 
     const normalized = {
-        tabs: candidate.tabs.map((tab, index) => ({
-            id: typeof tab?.id === 'string' && tab.id.length > 0 ? tab.id : createTabId(),
-            title: deriveTabTitle(tab?.content || '', index + 1),
-            content: typeof tab?.content === 'string' ? tab.content : '',
-            wrap: typeof tab?.wrap === 'boolean' ? tab.wrap : true,
-            scrollTop: typeof tab?.scrollTop === 'number' ? tab.scrollTop : 0,
-            mode: normalizeMode(typeof tab?.mode === 'string'
-                ? tab.mode
-                : tab?.language),
-            diff: {
-                left: typeof tab?.diff?.left === 'string' ? tab.diff.left : '',
-                right: typeof tab?.diff?.right === 'string' ? tab.diff.right : ''
-            },
-            table: {
-                rows: Number.isInteger(tab?.table?.rows) ? tab.table.rows : createDefaultTable().rows,
-                cols: Number.isInteger(tab?.table?.cols) ? tab.table.cols : createDefaultTable().cols,
-                cells: Array.isArray(tab?.table?.cells) ? tab.table.cells : createDefaultTable().cells
-            }
+        tabs: candidate.tabs.map(normalizeTab),
+        savedTabs: (Array.isArray(candidate.savedTabs) ? candidate.savedTabs : []).map((tab, index) => ({
+            ...normalizeTab(tab, index),
+            savedAt: typeof tab?.savedAt === 'number' ? tab.savedAt : Date.now()
         })),
         activeTabId: typeof candidate.activeTabId === 'string' ? candidate.activeTabId : null,
         nextTabNumber: Number.isFinite(candidate.nextTabNumber)
@@ -438,11 +446,40 @@ export class EditorStateStore {
         this.saveImmediate();
     }
 
-    closeTab(tabId) {
+    isTabEmpty(tabId) {
+        const tab = this.state.tabs.find((item) => item.id === tabId);
+        return !tab || (!tab.content.trim() && !tab.diff.left.trim() && !tab.diff.right.trim());
+    }
+
+    getSavedTabs() {
+        return this.state.savedTabs;
+    }
+
+    // Brings a saved tab back as an open tab and makes it active.
+    reopenSavedTab(savedId) {
+        const index = this.state.savedTabs.findIndex((tab) => tab.id === savedId);
+        if (index === -1) return;
+
+        const [{ savedAt, ...tab }] = this.state.savedTabs.splice(index, 1);
+        if (this.state.tabs.some((open) => open.id === tab.id)) tab.id = createTabId();
+        this.state.tabs.push(tab);
+        this.state.activeTabId = tab.id;
+        this.saveImmediate();
+    }
+
+    deleteSavedTab(savedId) {
+        this.state.savedTabs = this.state.savedTabs.filter((tab) => tab.id !== savedId);
+        this.saveImmediate();
+    }
+
+    closeTab(tabId, { save = false } = {}) {
         const closedIndex = this.state.tabs.findIndex((tab) => tab.id === tabId);
         if (closedIndex === -1) return;
 
-        this.state.tabs.splice(closedIndex, 1);
+        const [closed] = this.state.tabs.splice(closedIndex, 1);
+        if (save) {
+            this.state.savedTabs.unshift({ ...cloneValue(closed), savedAt: Date.now() });
+        }
 
         if (this.state.tabs.length === 0) {
             const tab = createTabRecord(this.state, '');
@@ -509,7 +546,8 @@ export class EditorStateStore {
         activeTab.table = {
             rows: Number.isInteger(tableData?.rows) ? tableData.rows : createDefaultTable().rows,
             cols: Number.isInteger(tableData?.cols) ? tableData.cols : createDefaultTable().cols,
-            cells: Array.isArray(tableData?.cells) ? tableData.cells : createDefaultTable().cells
+            cells: Array.isArray(tableData?.cells) ? tableData.cells : createDefaultTable().cells,
+            widths: Array.isArray(tableData?.widths) ? tableData.widths : []
         };
 
         if (typeof content === 'string') {
