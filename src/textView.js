@@ -294,7 +294,7 @@ export class CanvasTextView {
             const wanted = resized || (sizeMatch ? Number(sizeMatch[1]) : element.naturalWidth);
             const width = element.naturalWidth ? Math.max(IMAGE_MIN_WIDTH, Math.min(wanted, maxWidth)) : 0;
             const imageHeight = width ? element.naturalHeight * (width / element.naturalWidth) : 0;
-            images.push({ src, element, altStart, altEnd, width, height: imageHeight });
+            images.push({ src, element, start: match.index, end: match.index + match[0].length, altStart, altEnd, width, height: imageHeight });
             if (imageHeight) height += imageHeight + IMAGE_GAP;
         }
         if (images.length === 0) return null;
@@ -848,6 +848,7 @@ export class CanvasTextView {
         }
 
         if (['Shift', 'Control', 'Alt', 'Meta'].includes(event.key)) return;
+        if (this.guardKey(event)) return;
         this.goalX = null;
         const before = `${this.input.selectionStart}:${this.input.selectionEnd}`;
         window.requestAnimationFrame(() => {
@@ -916,6 +917,51 @@ export class CanvasTextView {
         window.addEventListener('mouseup', onUp);
     }
 
+    // An image mention is one object: only its alt text is editable. Everything else (`![`, `](data:…)`)
+    // can be deleted only as a whole. For an edit of [from, to) (from === to: an insertion) returns
+    // null when it's free, 'blocked' for an insertion into the structure, or the range widened to
+    // cover every mention whose structure it touches.
+    guardEdit(from, to) {
+        if (!this.images) return null;
+        this.ensureLayout();
+        let [low, high] = [from, to];
+        const last = lastAtOrBelow(this.lineStarts, Math.max(from, to - 1));
+        for (let line = lastAtOrBelow(this.lineStarts, from); line <= last; line += 1) {
+            const base = this.lineStarts[line];
+            for (const image of this.lineExtras[line]?.images || []) {
+                const [start, altStart, altEnd, end] = [image.start, image.altStart, image.altEnd, image.end].map((at) => base + at);
+                if (from === to) {
+                    if ((start < from && from < altStart) || (altEnd < from && from < end)) return 'blocked';
+                } else if ((from < altStart && to > start) || (from < end && to > altEnd)) {
+                    low = Math.min(low, start);
+                    high = Math.max(high, end);
+                }
+            }
+        }
+        return low === from && high === to ? null : [low, high];
+    }
+
+    // Keys run before the editor controller's own handlers (auto-indent, pairs), so guard them here:
+    // widen the selection over whole mentions and let the key proceed, or swallow it.
+    guardKey(event) {
+        const { key } = event;
+        const deleting = key === 'Backspace' || key === 'Delete';
+        if (!deleting && key !== 'Enter' && key !== 'Tab' && (key.length !== 1 || event.ctrlKey || event.metaKey)) return false;
+        const { selectionStart, selectionEnd } = this.input;
+        let [from, to] = [selectionStart, selectionEnd];
+        if (from === to && deleting) [from, to] = key === 'Backspace' ? [from - 1, from] : [from, from + 1];
+        if (from < 0 || (key === 'Tab' && from !== to)) return false; // Tab on a selection indents lines
+        const guard = this.guardEdit(from, to);
+        if (!guard) return false;
+        if (guard === 'blocked') {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            return true;
+        }
+        this.select(guard[0], guard[1]);
+        return false;
+    }
+
     // The caret never rests inside a collapsed image payload: it jumps to the side it was heading.
     snapOutOfAtoms() {
         const caret = this.caretOffset();
@@ -939,6 +985,12 @@ export class CanvasTextView {
         const image = this.input.readOnly ? null : this.imageAt(event.clientX, event.clientY);
         if (image?.handle) {
             this.startImageResize(image, event);
+            return;
+        }
+        // Clicking an image selects its whole mention, so Backspace/Delete/typing replace it as one object.
+        if (image && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
+            const base = this.lineStarts[image.line];
+            this.select(base + image.image.start, base + image.image.end);
             return;
         }
 
@@ -1001,6 +1053,19 @@ export class CanvasTextView {
             this.revealOffset(this.caretOffset());
         });
         input.addEventListener('keydown', (event) => this.onKeyDown(event));
+        // Paste, cut, drop and IME edits that keydown can't see: same guard, applied by hand.
+        input.addEventListener('beforeinput', (event) => {
+            let { selectionStart: from, selectionEnd: to } = input;
+            if (from === to && event.inputType.startsWith('deleteContentBackward')) from -= 1;
+            else if (from === to && event.inputType.startsWith('delete')) to += 1;
+            const guard = from < 0 ? null : this.guardEdit(from, to);
+            if (!guard) return;
+            event.preventDefault();
+            if (guard === 'blocked') return;
+            const data = event.inputType.startsWith('delete') ? '' : (event.data ?? event.dataTransfer?.getData('text/plain') ?? '');
+            input.setRangeText(data, guard[0], guard[1], 'end');
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
         input.addEventListener('focus', () => this.restartBlink());
         input.addEventListener('blur', () => {
             window.clearInterval(this.blinkTimer);
