@@ -1,25 +1,24 @@
 import { TAB_INDENT, escapeRegExp } from './utils.js';
-import { highlightText } from './syntaxHighlighter.js';
+import { highlightTokens } from './syntaxHighlighter.js';
 
-const LARGE_CONTENT_THRESHOLD = 1_000_000;
-const LARGE_CONTENT_HIGHLIGHT_DELAY = 140;
+// Above this size only a window of text around the viewport is tokenized.
+const HIGHLIGHT_WINDOW_THRESHOLD = 200_000;
+const HIGHLIGHT_WINDOW_MARGIN = 20_000;
 const TAB_WIDTH_FOR_INDENT = 4;
 const HISTORY_LIMIT = 200;
 const MAX_HISTORY_TABS = 50;
 
 export class EditorController {
-    constructor({ editor, highlightLayer, stateStore, lineNumbers, statusBar, onActiveTitleChange }) {
+    constructor({ editor, view, stateStore, lineNumbers, statusBar, onActiveTitleChange }) {
         this.editor = editor;
-        this.highlightLayer = highlightLayer;
+        this.view = view;
         this.stateStore = stateStore;
         this.lineNumbers = lineNumbers;
         this.statusBar = statusBar;
         this.onActiveTitleChange = onActiveTitleChange;
         this.lastEnterHandledAt = 0;
         this.highlightRaf = 0;
-        this.highlightTimer = 0;
         this.highlightEnabled = true;
-        this.editorPane = this.editor.closest('.editor-pane');
         this.foldStateByTabId = new Map();
         this.displayToRawLineMap = null;
         this.foldableRangeByStartLine = new Map();
@@ -541,6 +540,7 @@ export class EditorController {
 
     setContent(value) {
         this.editor.value = value;
+        this.view.invalidate();
     }
 
     getSelectionOffsets() {
@@ -559,7 +559,8 @@ export class EditorController {
 
     setSelectionOffsets(start, end = start) {
         this.editor.setSelectionRange(start, end);
-        this.editor.focus();
+        this.editor.focus({ preventScroll: true });
+        this.view.revealOffset(end);
     }
 
     replaceSelectionText(nextSelectionText) {
@@ -909,15 +910,24 @@ export class EditorController {
     updateHighlightMode(contentLength = this.getContent().length, mode = this.getMode()) {
         const shouldEnable = true;
         this.highlightEnabled = shouldEnable;
-
-        if (!this.editorPane) return;
-
-        this.editorPane.classList.toggle('highlight-enabled', shouldEnable);
-        this.editorPane.classList.toggle('highlight-disabled', !shouldEnable);
+        // Inline images are a markdown feature: only the Text mode editor draws them.
+        this.view.setImages(mode === 'text');
 
         if (!shouldEnable) {
-            this.highlightLayer.innerHTML = '';
+            this.view.setTokens([]);
         }
+    }
+
+    // Pasted images become a markdown mention with the data inline, on a line of their own.
+    insertImageMention(dataUrl) {
+        const { start, end } = this.getSelectionOffsets();
+        const text = this.getContent();
+        const before = start > 0 && text[start - 1] !== '\n' ? '\n' : '';
+        const after = text[end] === '\n' ? '' : '\n';
+        const mention = `${before}![image](${dataUrl})${after}`;
+        const nextText = `${text.slice(0, start)}${mention}${text.slice(end)}`;
+        // Typing continues on the line below the image.
+        this.applyTextChange(nextText, start + mention.length + (after ? 0 : 1));
     }
 
     insertNewlineWithIndent() {
@@ -957,15 +967,13 @@ export class EditorController {
         }
 
         this.editor.readOnly = !activeTab || (collapsed.length > 0);
-        this.editor.scrollTop = activeTab?.scrollTop || 0;
-        this.editor.scrollLeft = 0;
         this.syncAfterContentMutation(rawText, {
             collapsedRanges: collapsed,
             syncHistory: true,
             updateTitle: false
         });
+        this.view.scrollTo(activeTab?.scrollTop || 0, 0);
         this.renderHighlight();
-        this.syncHighlightScroll();
     }
 
     getMode() {
@@ -978,53 +986,42 @@ export class EditorController {
 
     renderHighlight() {
         if (!this.highlightEnabled) {
-            this.highlightLayer.innerHTML = '';
+            this.view.setTokens([]);
             return;
         }
 
         const content = this.getDisplayContent();
-        this.highlightLayer.innerHTML = highlightText(content, this.getMode());
-    }
-
-    scheduleHighlight() {
-        const contentLength = this.getDisplayContent().length;
-        if (!this.highlightEnabled) return;
-
-        if (contentLength > LARGE_CONTENT_THRESHOLD) {
-            if (this.highlightRaf) {
-                window.cancelAnimationFrame(this.highlightRaf);
-                this.highlightRaf = 0;
-            }
-
-            if (this.highlightTimer) {
-                window.clearTimeout(this.highlightTimer);
-            }
-
-            this.highlightTimer = window.setTimeout(() => {
-                this.highlightTimer = 0;
-                this.renderHighlight();
-                this.syncHighlightScroll();
-            }, LARGE_CONTENT_HIGHLIGHT_DELAY);
+        if (content.length <= HIGHLIGHT_WINDOW_THRESHOLD) {
+            this.view.setTokens(highlightTokens(content, this.getMode()));
             return;
         }
 
-        if (this.highlightTimer) {
-            window.clearTimeout(this.highlightTimer);
-            this.highlightTimer = 0;
-        }
+        // shortcut: constructs that open before the window (block comments, fences) are missed at its top edge; fine for big logs/JSON.
+        const [visibleStart, visibleEnd] = this.view.getVisibleRange();
+        let start = Math.max(0, visibleStart - HIGHLIGHT_WINDOW_MARGIN);
+        const lineStart = content.lastIndexOf('\n', start) + 1;
+        if (start - lineStart < 2_000) start = lineStart;
+        const end = Math.min(content.length, visibleEnd + HIGHLIGHT_WINDOW_MARGIN);
+        this.view.setTokens(highlightTokens(content.slice(start, end), this.getMode()), start);
+    }
 
-        if (this.highlightRaf) return;
+    // Big documents are highlighted in a window; re-run it once the viewport nears the window's edge.
+    refreshHighlightWindow() {
+        const [tokenStart, tokenEnd] = this.view.tokenRange || [0, 0];
+        if (tokenEnd - tokenStart >= this.getDisplayContent().length) return;
+        const [visibleStart, visibleEnd] = this.view.getVisibleRange();
+        const margin = HIGHLIGHT_WINDOW_MARGIN / 4;
+        if ((tokenStart > 0 && visibleStart - margin < tokenStart) || visibleEnd + margin > tokenEnd) {
+            this.scheduleHighlight();
+        }
+    }
+
+    scheduleHighlight() {
+        if (!this.highlightEnabled || this.highlightRaf) return;
         this.highlightRaf = window.requestAnimationFrame(() => {
             this.highlightRaf = 0;
             this.renderHighlight();
-            this.syncHighlightScroll();
         });
-    }
-
-    syncHighlightScroll() {
-        // Match the textarea's content box (scrollbar excluded) so wrapped lines break at the same column.
-        this.highlightLayer.style.width = `${this.editor.clientWidth}px`;
-        this.highlightLayer.style.transform = `translate(${-this.editor.scrollLeft}px, ${-this.editor.scrollTop}px)`;
     }
 
     setMode(mode) {
@@ -1037,12 +1034,10 @@ export class EditorController {
             this.syncModelFromEditor();
         });
 
-        new ResizeObserver(() => this.syncHighlightScroll()).observe(this.editor);
-
-        this.editor.addEventListener('scroll', () => {
-            this.stateStore.updateActiveTabScroll(this.editor.scrollTop);
+        this.view.scroller.addEventListener('scroll', () => {
+            this.stateStore.updateActiveTabScroll(this.view.getScrollY());
             this.lineNumbers.scheduleRenderViewport();
-            this.syncHighlightScroll();
+            this.refreshHighlightWindow();
         });
 
         this.editor.addEventListener('keydown', (event) => {
@@ -1245,14 +1240,24 @@ export class EditorController {
             this.applyTextChange(nextText, start + 1);
         });
 
-        this.editor.addEventListener('paste', () => {
+        this.editor.addEventListener('paste', (event) => {
+            const imageFile = [...(event.clipboardData?.items || [])]
+                .find((item) => item.kind === 'file' && item.type.startsWith('image/'))
+                ?.getAsFile();
+            if (imageFile && this.getMode() === 'text' && !this.isFoldedViewActive()) {
+                event.preventDefault();
+                const reader = new FileReader();
+                reader.onload = () => this.insertImageMention(reader.result);
+                reader.readAsDataURL(imageFile);
+                return;
+            }
+
             // Let the browser paste natively, then synchronize once the value updates.
             window.requestAnimationFrame(() => {
                 this.syncModelFromEditor();
             });
         });
 
-        this.editor.addEventListener('click', () => this.statusBar.scheduleUpdate());
         this.editor.addEventListener('keyup', () => this.statusBar.scheduleUpdate());
 
         this.editor.addEventListener('select', () => this.statusBar.scheduleUpdate());

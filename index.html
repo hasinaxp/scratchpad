@@ -86,6 +86,7 @@
                     <button id="export-localstorage-btn" class="submenu-item" type="button" role="menuitem">Export data</button>
                     <button id="import-localstorage-btn" class="submenu-item" type="button" role="menuitem">Import data</button>
                     <button id="download-tab-btn" class="submenu-item" type="button" role="menuitem">Download tab content</button>
+                    <button id="download-selection-btn" class="submenu-item" type="button" role="menuitem">Download selection</button>
                     <div class="submenu-divider" role="separator"></div>
                     <div class="submenu-label">Saved tabs</div>
                     <div id="saved-tabs-list" class="saved-tabs-list"></div>
@@ -138,9 +139,8 @@
                     </section>
                     <div class="editor-shell">
                         <div id="line-numbers" class="line-numbers" aria-hidden="true"></div>
-                        <div class="editor-pane">
-                            <pre id="editor-highlight" class="editor-highlight" aria-hidden="true"></pre>
-                            <textarea id="tab-editor" class="tab-editor" spellcheck="false" placeholder="Type your notes here..."></textarea>
+                        <div class="editor-pane text-view">
+                            <textarea id="tab-editor" class="text-view-input" spellcheck="false" placeholder="Type your notes here..."></textarea>
                         </div>
                     </div>
                     <div id="diff-mode-shell" class="diff-mode-shell">
@@ -231,9 +231,8 @@
                         <button id="query-run" class="query-action" type="button">Run</button>
                     </div>
                     <div id="query-result-meta" class="query-result-meta">Ready</div>
-                    <div class="query-result-shell">
-                        <pre id="query-result-highlight" class="query-result-highlight" aria-hidden="true"></pre>
-                        <textarea id="query-result" class="query-result-editor" aria-live="polite" spellcheck="false" readonly></textarea>
+                    <div class="query-result-shell text-view">
+                        <textarea id="query-result" class="text-view-input" aria-live="polite" spellcheck="false" readonly></textarea>
                     </div>
                 </section>
                 <section id="query-guide-view" class="query-view" aria-label="Query guide view" hidden>

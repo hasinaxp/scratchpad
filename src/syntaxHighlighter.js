@@ -1,20 +1,23 @@
-import { escapeHtml } from './utils.js';
-
+// Tokens are { text, kind, url, bold }: kind is a colour name (null = plain text), url marks a link,
+// bold marks markdown emphasis.
 const cloneRegexGlobal = (regex) => {
     const flags = regex.flags.includes('g') ? regex.flags : `${regex.flags}g`;
     return new RegExp(regex.source, flags);
 };
 
-const wrap = (className, text) => `<span class="tok-${className}">${text}</span>`;
-
-// Excludes quotes/brackets so the URL is safe inside href="" and trailing punctuation is dropped.
+// Excludes quotes/brackets so trailing punctuation is not part of the link.
 const URL_PATTERN_CAPTURE = /(https?:\/\/[^\s"'<>`]*[^\s"'<>`.,;:!?)\]}])/;
 
-// Escapes text and wraps URLs in anchors; anchors are inline so the overlay layout stays identical.
-const escapeWithLinks = (text) => `${text || ''}`.split(URL_PATTERN_CAPTURE).map((part, index) => {
-    const escaped = escapeHtml(part);
-    return index % 2 ? `<a class="tok-url" href="${escaped}" target="_blank" rel="noopener noreferrer">${escaped}</a>` : escaped;
-}).join('');
+const splitLinks = (text, kind = null) => `${text || ''}`.split(URL_PATTERN_CAPTURE)
+    .map((part, index) => ({ text: part, kind, url: index % 2 === 1 }))
+    .filter((token) => token.text);
+
+// The outer kind fills in where inner tokens have none, like a nested span would.
+const wrap = (kind, tokens) => tokens.map((token) => (token.kind ? token : { ...token, kind }));
+
+const NEWLINE = { text: '\n', kind: null, url: false };
+const EMPHASIS = new Set(['strong', 'em']);
+const joinLines = (chunks) => chunks.flatMap((tokens, index) => (index ? [NEWLINE, ...tokens] : tokens));
 
 const applyRulesSafely = (text, rules) => {
     let segments = [{ text, className: null }];
@@ -66,16 +69,22 @@ const applyRulesSafely = (text, rules) => {
         segments = nextSegments;
     }
 
-    return segments.map((segment) => {
-        const escaped = escapeWithLinks(segment.text);
-        if (!segment.className) return escaped;
-        return `<span class="tok-${segment.className}">${escaped}</span>`;
-    }).join('');
+    // 'plain' only shields text from later rules; emphasis is a weight, not a colour, so both leave
+    // kind empty and inherit the colour around them (e.g. a list item's).
+    return segments.flatMap((segment) => {
+        if (segment.className === 'plain') return splitLinks(segment.text);
+        if (EMPHASIS.has(segment.className)) return splitLinks(segment.text).map((token) => ({ ...token, bold: true }));
+        return splitLinks(segment.text, segment.className);
+    });
 };
 
 const applyInlineMarkdown = (line) => {
     const rules = [
         [/(`[^`\n]+`)/g, 'code'],
+        [/\*\*[^*\n]+\*\*/g, 'strong'],
+        [/(?<![*\w])\*[^*\s](?:[^*\n]*[^*\s])?\*(?![*\w])/g, 'em'],
+        // Contractions (haven't, I've, it's) must not open a single-quoted string.
+        [/\p{L}['’](?:t|s|re|ve|ll|d|m)\b/giu, 'plain'],
         [/("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/g, 'string'],
         [/(\[[^\]]+\]\([^\)]+\))/g, 'link'],
         [/[(){}\[\]]/g, 'bracket']
@@ -100,7 +109,7 @@ const FENCE_LANGUAGE_ALIASES = {
 // Fenced blocks tagged with a known language get that language's rules; others stay plain code.
 const highlightFence = (lines, tag) => {
     const rules = rulesByLanguage[FENCE_LANGUAGE_ALIASES[tag]];
-    if (!rules) return lines.map((line) => wrap('code', escapeWithLinks(line))).join('\n');
+    if (!rules) return joinLines(lines.map((line) => splitLinks(line, 'code')));
     return applyRulesSafely(lines.join('\n'), rules);
 };
 
@@ -118,14 +127,14 @@ const highlightMarkdown = (text) => {
 
         if (!fence && (trimmed.startsWith('```') || trimmed.startsWith('~~~'))) {
             fence = { marker: trimmed.slice(0, 3), tag: trimmed.slice(3).trim().split(/\s+/)[0].toLowerCase(), lines: [] };
-            out.push(wrap('code', escapeWithLinks(line)));
+            out.push(splitLinks(line, 'code'));
             continue;
         }
 
         if (fence) {
             if (trimmed.startsWith(fence.marker)) {
                 closeFence();
-                out.push(wrap('code', escapeWithLinks(line)));
+                out.push(splitLinks(line, 'code'));
             } else {
                 fence.lines.push(line);
             }
@@ -133,12 +142,12 @@ const highlightMarkdown = (text) => {
         }
 
         if (/^\s*#{1,6}\s/.test(line)) {
-            out.push(wrap('title', escapeWithLinks(line)));
+            out.push(splitLinks(line, 'title'));
             continue;
         }
 
         if (/^\s*>/.test(line)) {
-            out.push(wrap('comment', escapeWithLinks(line)));
+            out.push(splitLinks(line, 'comment'));
             continue;
         }
 
@@ -148,7 +157,7 @@ const highlightMarkdown = (text) => {
         }
 
         if (/^\s*(?:---|\*\*\*|___)\s*$/.test(line)) {
-            out.push(wrap('keyword', escapeWithLinks(line)));
+            out.push(splitLinks(line, 'keyword'));
             continue;
         }
 
@@ -156,7 +165,7 @@ const highlightMarkdown = (text) => {
     }
 
     if (fence) closeFence();
-    return out.join('\n');
+    return joinLines(out);
 };
 
 const pythonRules = [
@@ -218,27 +227,12 @@ const rulesByLanguage = {
     json: [...jsonRules, bracketRule]
 };
 
-export const highlightText = (text, language = 'text') => {
+export const highlightTokens = (text, language = 'text') => {
     const source = text || '';
-    let html = '';
-    const normalizedLanguage = language === 'markdown' ? 'text' : language;
+    if (language === 'text' || language === 'markdown') return highlightMarkdown(source);
 
-    if (normalizedLanguage === 'text') {
-        html = highlightMarkdown(source);
-    } else {
-        const rules = normalizedLanguage === 'json' && looksEscapedJson(source)
-            ? [...escapedJsonRules, bracketRule]
-            : (rulesByLanguage[normalizedLanguage] || rulesByLanguage.python);
-        html = applyRulesSafely(source, rules);
-    }
-
-    if (html.length === 0) {
-        html = ' ';
-    }
-
-    if (source.endsWith('\n')) {
-        html += ' ';
-    }
-
-    return html;
+    const rules = language === 'json' && looksEscapedJson(source)
+        ? [...escapedJsonRules, bracketRule]
+        : (rulesByLanguage[language] || rulesByLanguage.python);
+    return applyRulesSafely(source, rules);
 };

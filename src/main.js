@@ -6,7 +6,8 @@ import { EditorController } from './editor.js';
 import { getDecodeCandidates } from './decoding.js';
 import { formatJsonContent, extractJsonChunks } from './jsonFormatting.js';
 import { execute as executeJpl } from './jpl.js';
-import { highlightText } from './syntaxHighlighter.js';
+import { highlightTokens } from './syntaxHighlighter.js';
+import { CanvasTextView } from './textView.js';
 import { DiffModeController } from './diffMode.js';
 import { TableModeController } from './tableMode.js';
 import { findTabMatches } from './fuzzySearch.js';
@@ -30,7 +31,6 @@ const addTabButton = byId('add-tab');
 const editor = byId('tab-editor');
 const tabContent = q('.tab-content');
 const lineNumbers = byId('line-numbers');
-const highlightLayer = byId('editor-highlight');
 const editorShell = q('.editor-shell');
 const diffModeShell = byId('diff-mode-shell');
 const tableModeShell = byId('table-mode-shell');
@@ -68,6 +68,7 @@ const exportLocalStorageButton = byId('export-localstorage-btn');
 const importLocalStorageButton = byId('import-localstorage-btn');
 const importLocalStorageInput = byId('import-localstorage-input');
 const downloadTabButton = byId('download-tab-btn');
+const downloadSelectionButton = byId('download-selection-btn');
 const queryPanel = byId('query-panel');
 const searchPanel = byId('search-panel');
 const searchPanelClose = byId('search-panel-close');
@@ -84,7 +85,6 @@ const queryMainView = byId('query-main-view');
 const queryGuideView = byId('query-guide-view');
 const queryResultMeta = byId('query-result-meta');
 const queryResult = byId('query-result');
-const queryResultHighlight = byId('query-result-highlight');
 const statusPosition = byId('status-position');
 const statusLines = byId('status-lines');
 const statusChars = byId('status-chars');
@@ -415,12 +415,7 @@ const selectFindMatch = (index) => {
     const match = findState.matches[index];
     findState.activeIndex = index;
     editorController.setSelectionOffsets(match.start, match.end);
-
-    const lineNumber = Math.max(1, (editorController.getContent().slice(0, match.start).match(/\n/g)?.length || 0) + 1);
-    const lineHeight = parseFloat(window.getComputedStyle(editor).lineHeight) || 19;
-    const targetTop = Math.max(0, (lineNumber - 1) * lineHeight - (editor.clientHeight * 0.35));
-    editor.scrollTop = targetTop;
-    lineNumbersManager.scheduleRenderViewport();
+    editorView.revealOffset(match.start, true);
     statusBarManager.scheduleUpdate();
     findCount.textContent = `${index + 1} / ${findState.matches.length}`;
 };
@@ -517,11 +512,8 @@ const prettyPrint = (value) => JSON.stringify(value, null, 2);
 const setQueryResultText = (text) => {
     const resultText = `${text || ''}`;
     queryResult.value = resultText;
-    queryResultHighlight.innerHTML = highlightText(resultText, 'json');
-};
-
-const syncQueryResultScroll = () => {
-    queryResultHighlight.style.transform = `translate(${-queryResult.scrollLeft}px, ${-queryResult.scrollTop}px)`;
+    queryResultView.invalidate();
+    queryResultView.setTokens(highlightTokens(resultText, 'json'));
 };
 
 const runQueryOnWholeJson = (queryText, rawText) => {
@@ -694,8 +686,16 @@ const renderSavedTabs = () => {
     }).join('');
 };
 
+// Only the Text/JSON editor has a text selection to save; diff and table modes have their own exports.
+const getEditorSelectionText = () => (
+    TEXT_MODES.has(getNormalizedMode(stateStore.getActiveTab())) ? editorController.getSelectedText() : ''
+);
+
 const setFilesMenuOpen = (open) => {
-    if (open) renderSavedTabs();
+    if (open) {
+        renderSavedTabs();
+        downloadSelectionButton.disabled = !getEditorSelectionText();
+    }
     filesSubmenu.hidden = !open;
     filesMenuButton.setAttribute('aria-expanded', String(open));
 };
@@ -748,7 +748,10 @@ setSearchPanelOpen(false);
 setQueryGuideMode(false);
 updateFindToggleButtons();
 
-const lineNumbersManager = new LineNumbersManager(editor, lineNumbers, 24);
+const editorView = new CanvasTextView(editor.parentElement);
+const queryResultView = new CanvasTextView(queryResult.parentElement, { wrap: false });
+const lineNumbersManager = new LineNumbersManager(editorView, lineNumbers, 24);
+editorView.onLayoutChange = () => lineNumbersManager.scheduleRenderViewport();
 
 let editorController = null;
 let statusBarManager = null;
@@ -830,11 +833,7 @@ const jumpToSearchMatch = (match) => {
     const nextStart = Math.max(0, match.offset || 0);
     const nextEnd = Math.max(nextStart + 1, nextStart + (match.length || 1));
     editorController.setSelectionOffsets(nextStart, nextEnd);
-
-    const lineHeight = parseFloat(window.getComputedStyle(editor).lineHeight) || 19;
-    const targetTop = Math.max(0, (Math.max(1, match.lineNumber) - 1) * lineHeight - (editor.clientHeight * 0.35));
-    editor.scrollTop = targetTop;
-    lineNumbersManager.scheduleRenderViewport();
+    editorView.revealOffset(nextStart, true);
     statusBarManager.scheduleUpdate();
 };
 
@@ -856,9 +855,7 @@ const render = () => {
     diffModeShell.setAttribute('aria-hidden', String(!isDiffMode));
     tableModeShell.setAttribute('aria-hidden', String(!isTableMode));
 
-    if (lineNumbersManager) {
-        lineNumbersManager.setWrapEnabled(isEditorMode ? wrapEnabled : true);
-    }
+    editorView.setWrap(isEditorMode ? wrapEnabled : true);
 
     if (isDiffMode) {
         diffModeController.renderTab(activeTab);
@@ -925,7 +922,7 @@ tabsView = new TabsView({
 
 editorController = new EditorController({
     editor,
-    highlightLayer,
+    view: editorView,
     stateStore,
     lineNumbers: lineNumbersManager,
     statusBar: statusBarManager,
@@ -1206,8 +1203,6 @@ queryInput.addEventListener('keydown', (event) => {
     }
 });
 
-queryResult.addEventListener('scroll', syncQueryResultScroll);
-
 exportLocalStorageButton.addEventListener('click', () => {
     const snapshot = stateStore.exportStateSnapshot();
     downloadBlobText(JSON.stringify(snapshot, null, 2), 'scratchpad-data.json');
@@ -1253,6 +1248,16 @@ downloadTabButton.addEventListener('click', () => {
         : (isTableMode ? tableModeController.getExportText() : (activeTab.content || ''));
     const fileName = isDiffMode ? `${title}.${ext}` : `${title}.${ext}`;
     downloadBlobText(text, fileName);
+    setFilesMenuOpen(false);
+});
+
+downloadSelectionButton.addEventListener('click', () => {
+    const text = getEditorSelectionText();
+    if (!text) return;
+
+    const activeTab = stateStore.getActiveTab();
+    const ext = languageToExt[getNormalizedMode(activeTab)] || 'txt';
+    downloadBlobText(text, `${sanitizeFileName(activeTab?.title)}-selection.${ext}`);
     setFilesMenuOpen(false);
 });
 
@@ -1434,11 +1439,6 @@ window.addEventListener('resize', () => {
     lineNumbersManager.scheduleRenderViewport();
     statusBarManager.scheduleUpdate();
 });
-
-const setCtrlHeld = (held) => document.body.classList.toggle('ctrl-held', held);
-window.addEventListener('keydown', (event) => setCtrlHeld(event.ctrlKey || event.metaKey));
-window.addEventListener('keyup', (event) => setCtrlHeld(event.ctrlKey || event.metaKey));
-window.addEventListener('blur', () => setCtrlHeld(false));
 
 window.addEventListener('beforeunload', () => {
     stateStore.flushSave();

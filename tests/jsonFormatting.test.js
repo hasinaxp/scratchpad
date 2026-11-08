@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { extractJsonChunks, formatJsonContent } from '../src/jsonFormatting.js';
-import { highlightText } from '../src/syntaxHighlighter.js';
+import { highlightTokens } from '../src/syntaxHighlighter.js';
 
 test('escaped JSON is detected as a chunk with its real JSON', () => {
     const source = 'log: {\\"name\\": \\"remi\\", \\"tags\\": [\\"a\\"]} done';
@@ -34,11 +34,11 @@ test('formatting an escaped chunk outputs real JSON', () => {
 });
 
 test('escaped JSON is highlighted as keys and strings', () => {
-    const html = highlightText('{\\"name\\": \\"remi\\", \\"n\\": 2}', 'json');
-    const kinds = (kind) => [...html.matchAll(new RegExp(`<span class="tok-${kind}">([^<]*)</span>`, 'g'))].map((m) => m[1]);
+    const list = highlightTokens('{\\"name\\": \\"remi\\", \\"n\\": 2}', 'json');
+    const kinds = (kind) => list.filter((token) => token.kind === kind).map((token) => token.text);
     assert.deepEqual(kinds('keyword'), ['\\"name\\":', '\\"n\\":']);
     assert.deepEqual(kinds('string'), ['\\"remi\\"']);
     assert.deepEqual(kinds('number'), ['2']);
     // Plain JSON strings with escaped quotes are still one string token.
-    assert.deepEqual([...highlightText('{"m": "say \\"hi\\""}', 'json').matchAll(/tok-string">([^<]*)</g)].map((m) => m[1]), ['"say \\"hi\\""']);
+    assert.deepEqual(highlightTokens('{"m": "say \\"hi\\""}', 'json').filter((token) => token.kind === 'string').map((token) => token.text), ['"say \\"hi\\""']);
 });

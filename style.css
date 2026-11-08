@@ -16,6 +16,22 @@
     --acc-col2: #e06c75;
     --acc-col3: #61afef;
     --acc-col4: #3ed6a6;
+    /* Editor text and syntax colours, read by the canvas text view (src/textView.js). */
+    --editor-text-col: #c2c2c2;
+    --grain-opacity: 0.06;
+    --editor-grain-opacity: 0.035; /* extra grain on top of the global layer, editor only */
+    --grain-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='2.4' intercept='-0.7'/%3E%3CfeFuncG type='linear' slope='2.4' intercept='-0.7'/%3E%3CfeFuncB type='linear' slope='2.4' intercept='-0.7'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    --tok-keyword: #3fd2e3;
+    --tok-string: #ff6b7d;
+    --tok-number: #f5a35b;
+    --tok-comment: #7f848e;
+    --tok-title: #6cc0ff;
+    --tok-link: #d27bff;
+    --tok-code: #f7c948;
+    --tok-meta: #f05a45;
+    --tok-bracket: #22d3c5;
+    --selection-bg: rgba(72, 112, 168, 0.45);
+    --placeholder-col: #7f7f7f;
 }
 
 body {
@@ -24,6 +40,19 @@ body {
     overflow: hidden;
     height: 100vh;
     background-color: var(--back-col-body);
+}
+
+/* Fine film grain across the whole UI. It sits on top because most panels have opaque backgrounds;
+   a contrast-boosted grey noise at low opacity reads as surface texture, and it never takes pointer input. */
+body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    pointer-events: none;
+    background-image: var(--grain-image);
+    background-size: 180px 180px;
+    opacity: var(--grain-opacity);
 }
 
 /* Visible to screen readers and crawlers, not on screen. */
@@ -200,6 +229,12 @@ body {
 
 .submenu-item:hover {
     background-color: #2a2a2a;
+}
+
+.submenu-item:disabled {
+    color: #666;
+    background: transparent;
+    cursor: default;
 }
 
 #files-submenu {
@@ -635,43 +670,16 @@ body {
     overflow: hidden;
 }
 
-.query-result-highlight {
-    position: absolute;
-    inset: 0;
-    margin: 0;
+.query-result-shell.text-view {
     padding: 8px;
-    color: var(--text-col);
-    white-space: pre;
-    overflow: hidden;
-    pointer-events: none;
-    font-family: monospace;
-    font-size: 12px;
-    line-height: 1.4;
-}
-
-.query-result-editor {
-    position: absolute;
-    inset: 0;
-    flex: 1;
-    min-height: 0;
-    margin: 0;
-    overflow: auto;
-    background: transparent;
-    border: none;
-    padding: 8px;
-    color: transparent;
+    color: var(--editor-text-col);
     caret-color: #d8d8d8;
-    white-space: pre;
-    word-break: normal;
     font-family: monospace;
     font-size: 12px;
     line-height: 1.4;
-    resize: none;
-    outline: none;
-    z-index: 2;
 }
 
-.query-result-editor:focus {
+.query-result-shell:focus-within {
     box-shadow: inset 0 0 0 1px var(--acc-col);
 }
 
@@ -706,27 +714,23 @@ body {
 }
 
 .query-input,
-.query-result-editor,
 .query-guide-body {
     scrollbar-width: thin;
     scrollbar-color: #5b5b5b #1a1a1a;
 }
 
 .query-input::-webkit-scrollbar,
-.query-result-editor::-webkit-scrollbar,
 .query-guide-body::-webkit-scrollbar {
     width: 10px;
     height: 10px;
 }
 
 .query-input::-webkit-scrollbar-track,
-.query-result-editor::-webkit-scrollbar-track,
 .query-guide-body::-webkit-scrollbar-track {
     background: #1a1a1a;
 }
 
 .query-input::-webkit-scrollbar-thumb,
-.query-result-editor::-webkit-scrollbar-thumb,
 .query-guide-body::-webkit-scrollbar-thumb {
     background: #5b5b5b;
     border-radius: 8px;
@@ -734,7 +738,6 @@ body {
 }
 
 .query-input::-webkit-scrollbar-thumb:hover,
-.query-result-editor::-webkit-scrollbar-thumb:hover,
 .query-guide-body::-webkit-scrollbar-thumb:hover {
     background: #777;
 }
@@ -1160,25 +1163,16 @@ main {
 }
 
 .line-number {
+    position: absolute;
+    left: 0;
+    right: 0;
     display: flex;
     align-items: center;
     justify-content: flex-end;
     gap: 6px;
-    height: 1.35em;
+    height: var(--line-height, 1.35em);
     padding-right: 7px;
     cursor: pointer;
-}
-
-.line-number-continuation {
-    cursor: default;
-}
-
-.line-number-continuation .line-fold-indicator {
-    opacity: 0;
-}
-
-.line-number-continuation .line-number-label {
-    opacity: 0;
 }
 
 .line-fold-indicator {
@@ -1238,125 +1232,81 @@ main {
     text-align: right;
 }
 
-.line-numbers-spacer {
-    width: 1px;
-    opacity: 0;
-    pointer-events: none;
-}
-
 .line-numbers-viewport {
     position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    will-change: transform;
+    inset: 0;
+    /* Same bottom fade as the text canvas, so a cut-off row fades out in both columns. */
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 10px), transparent);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 10px), transparent);
 }
 
-.tab-editor {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    min-height: 0;
-    overflow: auto;
-    background-color: transparent;
-    border: none;
-    color: var(--text-col);
+.editor-pane.text-view {
+    color: var(--editor-text-col);
     caret-color: var(--text-col);
     font-family: monospace;
     font-size: 1em;
-    outline: none;
     line-height: 1.35;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    word-break: break-word;
     tab-size: 4;
-    padding: 0;
-    margin: 0;
-    padding-left: 0.75em;
-    scrollbar-width: thin;
-    scrollbar-color: #5b5b5b #1a1a1a;
-    z-index: 2;
-    resize: none;
+    /* Bottom padding keeps the last line clear of the edge fade when scrolled to the end. */
+    padding: 0 0 12px 0.75em;
 }
 
-.tab-content[data-wrap="off"] .tab-editor {
-    white-space: pre;
-    overflow-wrap: normal;
-    word-break: normal;
+.editor-pane.text-view::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image: var(--grain-image);
+    background-size: 180px 180px;
+    opacity: var(--editor-grain-opacity);
 }
 
-.editor-pane.highlight-enabled .tab-editor {
-    color: var(--text-col);
+/* Canvas text view: the canvas paints, the scroller provides native scrolling and mouse input,
+   and the textarea is an invisible input sink that follows the caret. */
+.text-view {
+    position: relative;
+    overflow: hidden;
 }
 
-.editor-pane.highlight-enabled .editor-highlight {
-    display: block;
-}
-
-.tab-editor::selection {
-    background: rgba(72, 112, 168, 0.45);
-}
-
-.editor-pane.highlight-disabled .editor-highlight {
-    display: none;
-}
-
-.tab-editor::placeholder {
-    color: #7f7f7f;
-}
-
-.editor-highlight {
+.text-view-canvas {
     position: absolute;
     top: 0;
     left: 0;
-    bottom: auto;
-    box-sizing: border-box;
-    display: block;
-    height: auto;
-    min-height: 100%;
+    pointer-events: none;
+    /* A row cut by the bottom edge would show only its glyph tops, which reads as a stray dashed line. */
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 10px), transparent);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 10px), transparent);
+}
+
+.text-view-scroller {
+    position: absolute;
+    inset: 0;
+    overflow: auto;
+    cursor: text;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: #5b5b5b #1a1a1a;
+}
+
+.text-view-spacer {
+    pointer-events: none;
+}
+
+.text-view-input {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 1px;
+    height: 1em;
     margin: 0;
     padding: 0;
-    padding-left: 0.75em;
-    overflow: visible;
-    pointer-events: none;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    word-break: break-word;
-    font-family: monospace;
-    font-size: 1em;
-    line-height: 1.35;
-    tab-size: 4;
-    font-weight: 400;
-    font-style: normal;
-    letter-spacing: normal;
-    color: transparent;
-    z-index: 3;
-}
-
-.tab-content[data-wrap="off"] .editor-highlight {
+    border: 0;
+    outline: none;
+    resize: none;
+    overflow: hidden;
     white-space: pre;
-    overflow-wrap: normal;
-    word-break: normal;
-}
-
-.tok-keyword { color: #56b6c2; }
-.tok-string { color: var(--acc-col2); }
-.tok-number { color: #d19a66; }
-.tok-comment { color: #7f848e; }
-.tok-title { color: #61afef; }
-.tok-link { color: #c678dd; }
-.tok-code { color: #e5c07b; }
-.tok-strong { color: #e06c75; }
-.tok-em { color: #abb2bf; }
-.tok-meta { color: #be5046; }
-.tok-bracket { color: var(--acc-col); }
-.tok-url { color: inherit; text-decoration: none; }
-
-body.ctrl-held .editor-highlight .tok-url {
-    pointer-events: auto;
-    cursor: pointer;
-    text-decoration: underline;
+    opacity: 0;
+    pointer-events: none;
 }
 
 .search-scope {
@@ -1368,22 +1318,22 @@ body.ctrl-held .editor-highlight .tok-url {
     font-family: monospace;
 }
 
-.tab-editor::-webkit-scrollbar {
+.text-view-scroller::-webkit-scrollbar {
     width: 10px;
     height: 10px;
 }
 
-.tab-editor::-webkit-scrollbar-track {
+.text-view-scroller::-webkit-scrollbar-track {
     background: #1a1a1a;
 }
 
-.tab-editor::-webkit-scrollbar-thumb {
+.text-view-scroller::-webkit-scrollbar-thumb {
     background: #5b5b5b;
     border-radius: 8px;
     border: 2px solid #1a1a1a;
 }
 
-.tab-editor::-webkit-scrollbar-thumb:hover {
+.text-view-scroller::-webkit-scrollbar-thumb:hover {
     background: #777;
 }
 
